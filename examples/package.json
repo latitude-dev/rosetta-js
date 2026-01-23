@@ -1,0 +1,23 @@
+{
+  "name": "rosetta-examples",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "E2E tests for the rosetta-ai package using real library integrations",
+  "scripts": {
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "@ai-sdk/openai": "^3.0.21",
+    "@anthropic-ai/sdk": "^0.71.2",
+    "@google/genai": "^1.38.0",
+    "ai": "^6.0.57",
+    "openai": "^4.0.0",
+    "promptl-ai": "^0.9.4",
+    "zod": "^4.3.6"
+  },
+  "devDependencies": {
+    "typescript": "^5.0.0",
+    "vitest": "^4.0.0"
+  }
+}
