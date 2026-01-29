@@ -291,7 +291,7 @@ describe("PromptlSpecification", () => {
     });
 
     describe("redacted-reasoning content", () => {
-      it("should convert redacted-reasoning content to redacted-reasoning part", () => {
+      it("should convert redacted-reasoning to reasoning part with originalType metadata", () => {
         const messages: PromptlMessage[] = [
           {
             role: "assistant",
@@ -301,9 +301,13 @@ describe("PromptlSpecification", () => {
 
         const result = PromptlSpecification.toGenAI({ messages, direction: "output" });
 
+        // Should be mapped to reasoning (closest GenAI equivalent) with originalType at root level
         expect(result.messages[0]?.parts[0]).toEqual({
-          type: "redacted-reasoning",
+          type: "reasoning",
           content: "encrypted-data-here",
+          _provider_metadata: {
+            originalType: "redacted-reasoning",
+          },
         });
       });
     });
@@ -431,8 +435,8 @@ describe("PromptlSpecification", () => {
           temp: 22,
           condition: "sunny",
         });
-        // biome-ignore lint/complexity/useLiteralKeys: required for TypeScript index signature access
-        expect(result.messages[0]?.parts[0]?._provider_metadata?.promptl?.["toolName"]).toBe("get_weather");
+        // toolName is stored at root level for cross-provider access
+        expect(result.messages[0]?.parts[0]?._provider_metadata?.toolName).toBe("get_weather");
       });
 
       it("should preserve isError in tool-result metadata", () => {
@@ -453,8 +457,8 @@ describe("PromptlSpecification", () => {
 
         const result = PromptlSpecification.toGenAI({ messages, direction: "input" });
 
-        // biome-ignore lint/complexity/useLiteralKeys: required for TypeScript index signature access
-        expect(result.messages[0]?.parts[0]?._provider_metadata?.promptl?.["isError"]).toBe(true);
+        // isError is stored at root level for cross-provider access
+        expect(result.messages[0]?.parts[0]?._provider_metadata?.isError).toBe(true);
       });
     });
 
@@ -476,8 +480,8 @@ describe("PromptlSpecification", () => {
         expect(result.messages[0]?.parts[0]?.type).toBe("tool_call_response");
         expect((result.messages[0]?.parts[0] as { id: string }).id).toBe("call-123");
         expect((result.messages[0]?.parts[0] as { response: unknown }).response).toBe("Sunny, 22°C");
-        // biome-ignore lint/complexity/useLiteralKeys: required for TypeScript index signature access
-        expect(result.messages[0]?.parts[0]?._provider_metadata?.promptl?.["toolName"]).toBe("get_weather");
+        // toolName is stored at root level for cross-provider access
+        expect(result.messages[0]?.parts[0]?._provider_metadata?.toolName).toBe("get_weather");
       });
 
       it("should convert legacy tool message with multiple content parts to array response", () => {
@@ -555,6 +559,52 @@ describe("PromptlSpecification", () => {
 
         // biome-ignore lint/complexity/useLiteralKeys: required for TypeScript index signature access
         expect(result.messages[0]?.parts[0]?._provider_metadata?.promptl?.["_sourceData"]).toEqual({ line: 5 });
+      });
+
+      it("should deduplicate tool calls when same id appears in both content and toolCalls", () => {
+        const messages: PromptlMessage[] = [
+          {
+            role: "assistant",
+            content: [{ type: "tool-call", toolCallId: "call-1", toolName: "search", args: { query: "test" } }],
+            toolCalls: [
+              { id: "call-1", name: "search", arguments: { query: "test" } }, // duplicate
+              { id: "call-2", name: "calculator", arguments: { op: "add" } }, // new
+            ],
+          },
+        ];
+
+        const result = PromptlSpecification.toGenAI({ messages, direction: "output" });
+
+        // Should have only 2 tool calls, not 3 (deduplicates call-1)
+        expect(result.messages[0]?.parts).toHaveLength(2);
+        const toolCallIds = result.messages[0]?.parts.map((p) => (p as { id: string }).id);
+        expect(toolCallIds).toContain("call-1");
+        expect(toolCallIds).toContain("call-2");
+      });
+
+      it("should not add tool calls from toolCalls that already exist in content", () => {
+        const messages: PromptlMessage[] = [
+          {
+            role: "assistant",
+            content: [
+              { type: "text", text: "Calling tools" },
+              { type: "tool-call", toolCallId: "call-a", toolName: "tool_a", args: {} },
+              { type: "tool-call", toolCallId: "call-b", toolName: "tool_b", args: {} },
+            ],
+            toolCalls: [
+              { id: "call-a", name: "tool_a", arguments: {} },
+              { id: "call-b", name: "tool_b", arguments: {} },
+            ],
+          },
+        ];
+
+        const result = PromptlSpecification.toGenAI({ messages, direction: "output" });
+
+        // Should have 1 text + 2 tool calls = 3 parts, not 5
+        expect(result.messages[0]?.parts).toHaveLength(3);
+        expect(result.messages[0]?.parts[0]?.type).toBe("text");
+        expect(result.messages[0]?.parts[1]?.type).toBe("tool_call");
+        expect(result.messages[0]?.parts[2]?.type).toBe("tool_call");
       });
     });
 
@@ -892,19 +942,45 @@ describe("PromptlSpecification", () => {
     });
 
     describe("redacted-reasoning content", () => {
-      it("should convert redacted-reasoning part to Promptl redacted-reasoning content", () => {
+      it("should restore redacted-reasoning from reasoning part with originalType metadata", () => {
         const messages: GenAIMessage[] = [
           {
             role: "assistant",
-            parts: [{ type: "redacted-reasoning", content: "encrypted-data" }],
+            parts: [
+              {
+                type: "reasoning",
+                content: "encrypted-data",
+                _provider_metadata: {
+                  // originalType is now at root level
+                  originalType: "redacted-reasoning",
+                },
+              },
+            ],
+          },
+        ];
+
+        const result = PromptlSpecification.fromGenAI({ messages, direction: "output" });
+
+        // Should restore the original redacted-reasoning type
+        expect(result.messages[0]?.content[0]).toEqual({
+          type: "redacted-reasoning",
+          data: "encrypted-data",
+        });
+      });
+
+      it("should convert regular reasoning to Promptl reasoning content", () => {
+        const messages: GenAIMessage[] = [
+          {
+            role: "assistant",
+            parts: [{ type: "reasoning", content: "thinking..." }],
           },
         ];
 
         const result = PromptlSpecification.fromGenAI({ messages, direction: "output" });
 
         expect(result.messages[0]?.content[0]).toEqual({
-          type: "redacted-reasoning",
-          data: "encrypted-data",
+          type: "reasoning",
+          text: "thinking...",
         });
       });
     });

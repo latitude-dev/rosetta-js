@@ -788,4 +788,118 @@ describe("edge cases", () => {
     expect(result.messages[0]?._provider_metadata).toEqual({ promptl: { messageField: "messageValue" } });
     expect(result.messages[0]?.parts[0]?._provider_metadata).toEqual({ promptl: { field: "value" } });
   });
+
+  describe("filterEmptyMessages config", () => {
+    it("should NOT filter empty messages by default", () => {
+      const messages: GenAIMessage[] = [
+        { role: "user", parts: [{ type: "text", content: "Hello" }] },
+        { role: "assistant", parts: [] },
+        { role: "user", parts: [] },
+      ];
+
+      // Default translator (filterEmptyMessages defaults to false)
+      const result = translator.translate(messages, {
+        from: Provider.GenAI,
+        to: Provider.GenAI,
+      });
+
+      // All messages should be preserved by default
+      expect(result.messages).toHaveLength(3);
+    });
+
+    it("should filter empty messages when filterEmptyMessages is true in config", () => {
+      const filteringTranslator = new Translator({ filterEmptyMessages: true });
+      const messages: GenAIMessage[] = [
+        { role: "user", parts: [{ type: "text", content: "Hello" }] },
+        { role: "assistant", parts: [] },
+        { role: "assistant", parts: [{ type: "text", content: "" }] },
+        { role: "user", parts: [] },
+        { role: "assistant", parts: [{ type: "text", content: "Real response" }] },
+      ];
+
+      const result = filteringTranslator.translate(messages, {
+        from: Provider.GenAI,
+        to: Provider.GenAI,
+      });
+
+      expect(result.messages).toHaveLength(2);
+      expect(result.messages[0]?.role).toBe("user");
+      expect(result.messages[0]?.parts[0]).toEqual({ type: "text", content: "Hello" });
+      expect(result.messages[1]?.role).toBe("assistant");
+      expect(result.messages[1]?.parts[0]).toEqual({ type: "text", content: "Real response" });
+    });
+
+    it("should keep messages with tool_call parts when filtering", () => {
+      const filteringTranslator = new Translator({ filterEmptyMessages: true });
+      const messages: GenAIMessage[] = [
+        { role: "user", parts: [{ type: "text", content: "Hello" }] },
+        {
+          role: "assistant",
+          parts: [{ type: "tool_call", id: "1", name: "test", arguments: {} }],
+        },
+      ];
+
+      const result = filteringTranslator.translate(messages, {
+        from: Provider.GenAI,
+        to: Provider.GenAI,
+      });
+
+      expect(result.messages).toHaveLength(2);
+      expect(result.messages[1]?.parts[0]?.type).toBe("tool_call");
+    });
+
+    it("should keep messages with tool_call_response parts when filtering", () => {
+      const filteringTranslator = new Translator({ filterEmptyMessages: true });
+      const messages: GenAIMessage[] = [
+        {
+          role: "tool",
+          parts: [{ type: "tool_call_response", id: "1", response: "result" }],
+        },
+      ];
+
+      const result = filteringTranslator.translate(messages, {
+        from: Provider.GenAI,
+        to: Provider.GenAI,
+      });
+
+      expect(result.messages).toHaveLength(1);
+      expect(result.messages[0]?.parts[0]?.type).toBe("tool_call_response");
+    });
+
+    it("should filter all roles with empty parts when filtering is enabled", () => {
+      const filteringTranslator = new Translator({ filterEmptyMessages: true });
+      const messages: GenAIMessage[] = [
+        { role: "user", parts: [] },
+        { role: "assistant", parts: [] },
+        { role: "tool", parts: [] },
+        { role: "user", parts: [{ type: "text", content: "Hello" }] },
+      ];
+
+      const result = filteringTranslator.translate(messages, {
+        from: Provider.GenAI,
+        to: Provider.GenAI,
+      });
+
+      // Only the non-empty user message should remain
+      expect(result.messages).toHaveLength(1);
+      expect(result.messages[0]?.role).toBe("user");
+      expect(result.messages[0]?.parts[0]).toEqual({ type: "text", content: "Hello" });
+    });
+
+    it("should filter messages with whitespace-only text when filtering is enabled", () => {
+      const filteringTranslator = new Translator({ filterEmptyMessages: true });
+      const messages: GenAIMessage[] = [
+        { role: "user", parts: [{ type: "text", content: "Hello" }] },
+        { role: "assistant", parts: [{ type: "text", content: "   " }] },
+      ];
+
+      const result = filteringTranslator.translate(messages, {
+        from: Provider.GenAI,
+        to: Provider.GenAI,
+      });
+
+      // Whitespace-only text is treated as empty
+      expect(result.messages).toHaveLength(1);
+    });
+  });
 });

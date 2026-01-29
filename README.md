@@ -121,11 +121,21 @@ import { Translator, Provider } from "rosetta-ai";
 const translator = new Translator({
   // Custom priority order for provider auto-detection
   inferPriority: [Provider.OpenAICompletions, Provider.Anthropic, Provider.GenAI],
+  
+  // Filter out empty messages during translation (default: false)
+  filterEmptyMessages: true,
 });
 
 const { messages } = translator.translate(inputMessages);
 const safeResult = translator.safeTranslate(inputMessages);
 ```
+
+**Configuration Options:**
+
+| Option | Type | Default | Description |
+|--------|------|---------|-------------|
+| `inferPriority` | `Provider[]` | `DEFAULT_INFER_PRIORITY` | Priority order for provider auto-detection |
+| `filterEmptyMessages` | `boolean` | `false` | Remove empty messages (no parts, or only empty text) during translation |
 
 ### Input Flexibility
 
@@ -339,22 +349,35 @@ const system: GenAISystem = [
 
 ### Provider Metadata
 
-All GenAI entities support `_provider_metadata` to preserve provider-specific data during translation. This enables lossless round-trips:
+All GenAI entities support `_provider_metadata` to preserve data during translation. The metadata has two types of fields:
+
+1. **Root-level shared fields** (camelCase): Cross-provider semantic data accessible to any target provider
+2. **Provider-specific slots** (snake_case): Data for same-provider round-trips only
 
 ```typescript
 const message: GenAIMessage = {
-  role: "assistant",
+  role: "tool",
   parts: [{
-    type: "text",
-    content: "I cannot help with that.",
+    type: "tool_call_response",
+    id: "call_123",
+    response: "Error occurred",
     _provider_metadata: {
-      openai_completions: { isRefusal: true },  // Preserved from OpenAI
+      // Root-level shared fields - any target provider can read these
+      toolName: "get_weather",  // Tool name (GenAI schema doesn't include it)
+      isError: true,            // Error indicator
+      
+      // Provider-specific slot - only for same-provider round-trips
+      openai_completions: { annotations: [...] },
     },
   }],
 };
 ```
 
-Metadata keys match the provider enum values: `openai_completions`, `anthropic`, `google`, `vercel_ai`, etc.
+**Shared fields**: `toolName`, `isError`, `isRefusal`, `originalType`
+
+**Provider slots**: `openai_completions`, `openai_responses`, `anthropic`, `google`, `vercel_ai`, `promptl`, `compat`
+
+This design enables lossless cross-provider translation while keeping providers isolated from each other.
 
 ## TypeScript Support
 

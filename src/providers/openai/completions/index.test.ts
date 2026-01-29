@@ -304,10 +304,11 @@ describe("OpenAICompletionsSpecification", () => {
           direction: "output",
         });
 
+        // isRefusal is stored at root level for cross-provider access
         expect(result.messages[0]?.parts[0]).toEqual({
           type: "text",
           content: "I cannot help with that.",
-          _provider_metadata: { openai_completions: { isRefusal: true } },
+          _provider_metadata: { isRefusal: true },
         });
       });
 
@@ -323,10 +324,11 @@ describe("OpenAICompletionsSpecification", () => {
           direction: "output",
         });
 
+        // isRefusal is stored at root level for cross-provider access
         expect(result.messages[0]?.parts[0]).toEqual({
           type: "text",
           content: "I cannot assist with that request.",
-          _provider_metadata: { openai_completions: { isRefusal: true } },
+          _provider_metadata: { isRefusal: true },
         });
       });
 

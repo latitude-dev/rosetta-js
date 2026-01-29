@@ -17,7 +17,7 @@ import {
   type OpenAIResponsesReasoning,
 } from "$package/providers/openai/responses/schema";
 import { Provider, type ProviderSpecification, type ProviderToGenAIArgs } from "$package/providers/provider";
-import { extractExtraFields } from "$package/utils";
+import { extractExtraFields, withMetadata } from "$package/utils";
 
 export const OpenAIResponsesSpecification = {
   provider: Provider.OpenAIResponses,
@@ -51,12 +51,6 @@ const KNOWN_MESSAGE_KEYS = ["type", "role", "content", "id", "status"];
 const KNOWN_FUNCTION_CALL_KEYS = ["type", "call_id", "name", "arguments"];
 const KNOWN_FUNCTION_OUTPUT_KEYS = ["type", "call_id", "output"];
 const KNOWN_REASONING_KEYS = ["type", "summary"];
-
-/** Adds provider metadata if there's any data to store. */
-function withMetadata(part: GenAIPart, metadata: Record<string, unknown>): GenAIPart {
-  if (Object.keys(metadata).length === 0) return part;
-  return { ...part, _provider_metadata: { openai_responses: metadata } };
-}
 
 /** Converts an OpenAI Responses item to a GenAI message. */
 function itemToGenAI(item: OpenAIResponsesItem): GenAIMessage {
@@ -118,7 +112,7 @@ function contentPartToGenAI(part: OpenAIResponsesContentPart): GenAIPart[] {
     case "input_text":
     case "output_text": {
       const extraFields = extractExtraFields(part as Record<string, unknown>, KNOWN_TEXT_KEYS);
-      return [withMetadata({ type: "text", content: part.text }, extraFields)];
+      return [withMetadata({ type: "text", content: part.text }, "openai_responses", extraFields)];
     }
 
     case "input_image": {
@@ -134,45 +128,63 @@ function contentPartToGenAI(part: OpenAIResponsesContentPart): GenAIPart[] {
             return [
               withMetadata(
                 { type: "blob", modality: "image", mime_type: match[1] || "image/png", content: match[2] || "" },
+                "openai_responses",
                 meta,
               ),
             ];
           }
         }
-        return [withMetadata({ type: "uri", modality: "image", uri: part.image_url }, meta)];
+        return [withMetadata({ type: "uri", modality: "image", uri: part.image_url }, "openai_responses", meta)];
       }
 
       if (part.file_id) {
-        return [withMetadata({ type: "file", modality: "image", file_id: part.file_id }, meta)];
+        return [withMetadata({ type: "file", modality: "image", file_id: part.file_id }, "openai_responses", meta)];
       }
 
       // No URL or file_id - return empty file reference
-      return [withMetadata({ type: "file", modality: "image", file_id: "" }, meta)];
+      return [withMetadata({ type: "file", modality: "image", file_id: "" }, "openai_responses", meta)];
     }
 
     case "input_file": {
       const extraFields = extractExtraFields(part as Record<string, unknown>, KNOWN_FILE_KEYS);
 
       if (part.file_data) {
-        return [withMetadata({ type: "blob", modality: "document", content: part.file_data }, extraFields)];
+        return [
+          withMetadata(
+            { type: "blob", modality: "document", content: part.file_data },
+            "openai_responses",
+            extraFields,
+          ),
+        ];
       }
 
       if (part.file_id) {
-        return [withMetadata({ type: "file", modality: "document", file_id: part.file_id }, extraFields)];
+        return [
+          withMetadata({ type: "file", modality: "document", file_id: part.file_id }, "openai_responses", extraFields),
+        ];
       }
 
-      return [withMetadata({ type: "file", modality: "document", file_id: "" }, extraFields)];
+      return [withMetadata({ type: "file", modality: "document", file_id: "" }, "openai_responses", extraFields)];
     }
 
     case "input_audio": {
       const extraFields = extractExtraFields(part as Record<string, unknown>, KNOWN_AUDIO_KEYS);
       const mimeType = part.format === "wav" ? "audio/wav" : "audio/mp3";
-      return [withMetadata({ type: "blob", modality: "audio", mime_type: mimeType, content: part.data }, extraFields)];
+      return [
+        withMetadata(
+          { type: "blob", modality: "audio", mime_type: mimeType, content: part.data },
+          "openai_responses",
+          extraFields,
+        ),
+      ];
     }
 
     case "refusal": {
       const extraFields = extractExtraFields(part as Record<string, unknown>, KNOWN_REFUSAL_KEYS);
-      return [withMetadata({ type: "text", content: part.refusal }, { isRefusal: true, ...extraFields })];
+      // Store isRefusal at root level for cross-provider access
+      return [
+        withMetadata({ type: "text", content: part.refusal }, "openai_responses", extraFields, { isRefusal: true }),
+      ];
     }
 
     default: {
@@ -204,7 +216,7 @@ function functionCallToGenAI(item: OpenAIResponsesFunctionCall): GenAIMessage {
 
   return {
     role: "assistant",
-    parts: [withMetadata(toolCallPart, extraFields)],
+    parts: [withMetadata(toolCallPart, "openai_responses", extraFields)],
   };
 }
 
@@ -231,7 +243,7 @@ function functionCallOutputToGenAI(item: OpenAIResponsesFunctionCallOutput): Gen
 
   return {
     role: "tool",
-    parts: [withMetadata(responsePart, extraFields)],
+    parts: [withMetadata(responsePart, "openai_responses", extraFields)],
   };
 }
 
@@ -248,7 +260,7 @@ function reasoningToGenAI(item: OpenAIResponsesReasoning): GenAIMessage {
   // Add extra fields (id, encrypted_content, status, etc.) to first part's metadata
   const firstPart = parts[0];
   if (Object.keys(extraFields).length > 0 && firstPart) {
-    parts[0] = withMetadata(firstPart, extraFields);
+    parts[0] = withMetadata(firstPart, "openai_responses", extraFields);
   }
 
   return {

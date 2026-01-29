@@ -144,13 +144,13 @@ function convertMessage(message: CompatMessage, direction: "input" | "output"): 
     parts.push({ type: "reasoning", content: reasoning });
   }
 
-  // Check for refusal (OpenAI)
+  // Check for refusal (OpenAI) - store at root level for cross-provider access
   const refusal = getString(normalized, "refusal");
   if (refusal) {
     parts.push({
       type: "text",
       content: refusal,
-      _provider_metadata: { compat: { isRefusal: true } },
+      _provider_metadata: { isRefusal: true },
     });
   }
 
@@ -221,7 +221,8 @@ function convertMessage(message: CompatMessage, direction: "input" | "output"): 
             type: "tool_call_response",
             id: typeof toolCallId === "string" ? toolCallId : null,
             response,
-            ...(toolName ? { _provider_metadata: { compat: { toolName } } } : {}),
+            // Store toolName at root level for cross-provider access
+            ...(toolName ? { _provider_metadata: { toolName: String(toolName) } } : {}),
           },
         ],
         ...(name ? { name } : {}),
@@ -451,22 +452,30 @@ function convertTypedPart(part: Obj, type: string): GenAIPart[] {
     case "redactedthinking":
     case "redacted-reasoning": {
       // Anthropic: { type: "redacted_thinking", data: "..." }
+      // Map to reasoning (closest GenAI equivalent) with originalType at root level for cross-provider access
       const data = getString(part, "data") ?? getString(part, "content");
       if (data) {
-        return [{ type: "redacted-reasoning", content: data }];
+        return [
+          {
+            type: "reasoning",
+            content: data,
+            _provider_metadata: { originalType: type },
+          },
+        ];
       }
       return [];
     }
 
     case "refusal": {
       // OpenAI: { type: "refusal", refusal: "..." }
+      // Store isRefusal at root level for cross-provider access
       const content = getString(part, "refusal") ?? getString(part, "content");
       if (content) {
         return [
           {
             type: "text",
             content,
-            _provider_metadata: { compat: { isRefusal: true } },
+            _provider_metadata: { isRefusal: true },
           },
         ];
       }
@@ -543,12 +552,13 @@ function convertUntypedPart(part: Obj): GenAIPart[] {
     const id = getString(functionResponse, "id");
     const name = getString(functionResponse, "name");
     const response = get(functionResponse, "response");
+    // Store toolName at root level for cross-provider access
     return [
       {
         type: "tool_call_response",
         id: id ?? null,
         response,
-        ...(name ? { _provider_metadata: { compat: { name } } } : {}),
+        ...(name ? { _provider_metadata: { toolName: name } } : {}),
       },
     ];
   }

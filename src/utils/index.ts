@@ -164,3 +164,59 @@ export function parseJsonIfString(value: unknown): unknown {
   }
   return value;
 }
+
+/**
+ * Shared metadata fields that can be read by any provider (cross-provider semantic data).
+ * These are stored at the root level of `_provider_metadata`.
+ */
+export type SharedMetadataFields = {
+  toolName?: string;
+  isError?: boolean;
+  isRefusal?: boolean;
+  originalType?: string;
+};
+
+/** Type for GenAI parts (used by withMetadata) */
+type PartWithMetadata = {
+  type: string;
+  _provider_metadata?: Record<string, unknown>;
+  [key: string]: unknown;
+};
+
+/**
+ * Adds provider metadata to a GenAI part if there's any data to store.
+ *
+ * @param part - The GenAI part to add metadata to
+ * @param providerKey - The provider's slot key (e.g., "anthropic", "openai_completions")
+ * @param providerMetadata - Provider-specific metadata for same-provider round-trips
+ * @param sharedFields - Cross-provider semantic data stored at root level
+ * @returns The part with `_provider_metadata` added, or the original part if no metadata
+ *
+ * @example
+ * // Add both shared and provider-specific metadata
+ * withMetadata(part, "anthropic", { cache_control: { type: "ephemeral" } }, { isError: true });
+ *
+ * // Add only shared metadata
+ * withMetadata(part, "openai_completions", {}, { isRefusal: true });
+ *
+ * // Add only provider-specific metadata
+ * withMetadata(part, "google", { extra_field: "value" });
+ */
+export function withMetadata<T extends PartWithMetadata>(
+  part: T,
+  providerKey: string,
+  providerMetadata: Record<string, unknown>,
+  sharedFields?: SharedMetadataFields,
+): T {
+  const hasProviderMetadata = Object.keys(providerMetadata).length > 0;
+  const hasShared = sharedFields && Object.keys(sharedFields).length > 0;
+  if (!hasProviderMetadata && !hasShared) return part;
+
+  return {
+    ...part,
+    _provider_metadata: {
+      ...(hasShared ? sharedFields : {}),
+      ...(hasProviderMetadata ? { [providerKey]: providerMetadata } : {}),
+    },
+  };
+}

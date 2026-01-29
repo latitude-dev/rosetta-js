@@ -169,6 +169,26 @@ if (result.error) {
 const translator = new Translator({
   inferPriority: [Provider.Promptl, Provider.GenAI],
 });
+
+// Custom translator that filters empty messages
+const filteringTranslator = new Translator({
+  filterEmptyMessages: true,
+});
+```
+
+### Translator Configuration
+
+The `Translator` class accepts configuration options:
+
+```typescript
+type TranslatorConfig = {
+  // Priority order for provider inference (default: DEFAULT_INFER_PRIORITY)
+  inferPriority?: Provider[];
+  
+  // Filter out empty messages during translation (default: false)
+  // When true, removes messages with no parts or only empty text parts
+  filterEmptyMessages?: boolean;
+};
 ```
 
 ### Provider Enum
@@ -1003,6 +1023,118 @@ if (isUrlString(value)) {
 } else {
   // Convert to blob part (base64)
 }
+
+// Read cross-provider data from root-level shared fields
+const toolName = part._provider_metadata?.toolName as string | undefined;
+const isError = part._provider_metadata?.isError as boolean | undefined;
+```
+
+#### Cross-Provider Translation Considerations
+
+When implementing provider conversions, keep these cross-provider concerns in mind:
+
+**1. Tool Name Preservation:**
+
+Tool names are essential for matching tool calls with tool results. When converting `tool_call_response` parts:
+
+- **In `toGenAI`**: Store `toolName` at the root level of `_provider_metadata` (not in your provider slot)
+- **In `fromGenAI`**: Read `toolName` from root level only
+- **Fallback to inference**: If not in metadata, try to infer from matching `tool_call` parts in the conversation by `id`
+- **Last resort**: Use `"unknown"` as a fallback
+
+```typescript
+// In toGenAI for tool_call_response:
+_provider_metadata: {
+  toolName: content.toolName,  // Root level for cross-provider access
+  yourProvider: { ... },       // Your slot for round-trip data
+}
+
+// In fromGenAI for tool_call_response:
+let toolName = partMeta?.toolName as string | undefined;  // Read from root
+if (!toolName && toolId && toolCallNameMap.has(toolId)) {
+  toolName = toolCallNameMap.get(toolId);
+}
+toolName = toolName ?? "unknown";
+```
+
+**2. Tool Call Deduplication:**
+
+Some providers (like Promptl) may have tool calls in BOTH the `content` array AND a separate `toolCalls` property. When converting:
+
+- Track tool call IDs already processed from content
+- Only add tool calls from the separate property if their ID isn't already present
+
+```typescript
+const toolCallIdsInContent = new Set<string>();
+for (const content of message.content) {
+  if (content.type === "tool-call" && content.toolCallId) {
+    toolCallIdsInContent.add(content.toolCallId);
+  }
+  parts.push(...convertContent(content));
+}
+if (message.toolCalls) {
+  for (const toolCall of message.toolCalls) {
+    if (!toolCallIdsInContent.has(toolCall.id)) {
+      parts.push(convertToolCall(toolCall));
+    }
+  }
+}
+```
+
+**3. Typed Tool Result Outputs:**
+
+Some providers (like VercelAI) use typed tool result outputs with `{ type, value }` structure:
+
+- **In `toGenAI`**: Extract the actual value and store `isError` at root level, store `outputType` in your slot
+- **In `fromGenAI`**: Read `isError` from root level, `outputType` from your slot, wrap responses appropriately
+
+```typescript
+// In toGenAI for tool_call_response:
+_provider_metadata: {
+  isError: true,                         // Root level for cross-provider access
+  vercel_ai: { outputType: "error-text" },  // Your slot for round-trip
+}
+
+// In fromGenAI for tool_call_response:
+const isError = partMeta?.isError as boolean | undefined;  // Read from root
+const outputType = partMeta?.vercel_ai?.outputType;         // Read from own slot
+if (typeof response === "string") {
+  output = { type: isError ? "error-text" : "text", value: response };
+} else {
+  output = { type: isError ? "error-json" : "json", value: response };
+}
+```
+
+**4. Provider-Specific Part Types:**
+
+When a source provider has part types that don't exist exactly in GenAI (e.g., `redacted-reasoning`):
+
+- **Always map to the closest GenAI part type** - Don't use generic parts if a close equivalent exists
+- Store `originalType` at the root level of `_provider_metadata` for cross-provider access
+- Only use generic parts when there truly is NO equivalent in GenAI
+
+```typescript
+// In toGenAI - map redacted-reasoning to reasoning (closest equivalent)
+case "redacted-reasoning":
+  return [{
+    type: "reasoning",  // Use existing GenAI type
+    content: content.data,
+    _provider_metadata: {
+      originalType: "redacted-reasoning",  // Root level for cross-provider access
+      promptl: { ...metadata },            // Your slot for round-trip
+    },
+  }];
+```
+
+```typescript
+// In fromGenAI - restore original type if coming back to same provider
+if (part.type === "reasoning") {
+  const originalType = part._provider_metadata?.originalType;  // Read from root
+  if (originalType === "redacted-reasoning") {
+    return { type: "redacted-reasoning", data: part.content };
+  }
+  return { type: "reasoning", text: part.content };
+}
 ```
 
 ### Schema Design Principles
@@ -1120,6 +1252,78 @@ export type ProviderMessage<P extends Provider> =
 8. **Opaque Metadata by Default**: Prefer `z.object({}).passthrough()` for metadata schemas; only define explicit fields when needed for conversion logic
 9. **Simplicity Over Completeness**: Keep translation logic minimal; don't preserve information that won't be used
 10. **Passthrough on All Entity Schemas**: Use `.passthrough()` on all `z.object()` schemas (messages, parts, tool calls, etc.) to preserve unknown fields when providers add new properties to their APIs
+11. **Provider Isolation**: Providers should NEVER know about or access other providers' metadata slots - use root-level shared fields for cross-provider data
+
+### Provider Isolation Philosophy
+
+**Critical principle**: Providers should only know about GenAI, never about each other. This ensures the architecture scales as new providers are added.
+
+#### The Problem
+
+When translating from Provider A to Provider B via GenAI, some semantically important data (like `toolName` on tool results) isn't part of the GenAI schema. Without a proper solution, you might be tempted to:
+
+```typescript
+// ANTI-PATTERN: Target provider checking source provider's metadata
+const promptlMeta = part._provider_metadata?.promptl;
+const isError = promptlMeta?.isError; // VercelAI knows about Promptl!
+```
+
+This creates coupling between providers and doesn't scale - each new provider would need to know about all existing providers.
+
+#### The Solution: Root-Level Shared Fields
+
+The `_provider_metadata` object has two types of fields:
+
+1. **Root-level shared fields** (camelCase): Cross-provider semantic data that any target provider can read
+2. **Provider-specific slots** (snake_case): Data for same-provider round-trips only
+
+```typescript
+// ProviderMetadataSchema structure:
+{
+  // Root-level shared fields - ANY provider can read these
+  toolName: z.string().optional(),      // Tool name for tool_call_response parts
+  isError: z.boolean().optional(),      // Error indicator
+  isRefusal: z.boolean().optional(),    // Refusal indicator
+  originalType: z.string().optional(),  // Original type for lossy conversions
+
+  // Provider-specific slots - ONLY read by same provider for round-trips
+  promptl: PromptlMetadataSchema.optional(),
+  vercel_ai: VercelAIMetadataSchema.optional(),
+  // ...other providers
+}
+```
+
+#### How to Use This
+
+**In `toGenAI` (source providers)**: Write cross-provider data to root level, provider-specific data to your slot:
+
+```typescript
+// Correct: Store shared data at root level
+_provider_metadata: {
+  toolName: content.toolName,           // Root level - target can read
+  isError: true,                        // Root level - target can read
+  promptl: { internalField: "..." },    // Your slot - for round-trip only
+}
+```
+
+**In `fromGenAI` (target providers)**: Read ONLY from root-level shared fields:
+
+```typescript
+// Correct: Read from root level only
+const toolName = partMeta?.toolName ?? "unknown";
+const isError = partMeta?.isError ?? false;
+
+// NEVER do this:
+const promptlMeta = partMeta?.promptl; // Don't check other providers!
+```
+
+#### Naming Convention
+
+The naming convention naturally distinguishes shared vs provider-specific:
+- **Shared fields**: camelCase (`toolName`, `isError`, `isRefusal`, `originalType`)
+- **Provider slots**: snake_case (`promptl`, `vercel_ai`, `openai_completions`)
+
+This makes it easy to see at a glance whether you're accessing shared or provider-specific data.
 
 ## Commands
 

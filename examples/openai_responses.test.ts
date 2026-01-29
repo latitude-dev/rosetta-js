@@ -266,7 +266,8 @@ describe("OpenAI Responses E2E", () => {
 
       expect(result.messages[0]?.parts[0]?.type).toBe("text");
       expect((result.messages[0]?.parts[0] as { content: string }).content).toBe("I cannot help with that request.");
-      expect(result.messages[0]?.parts[0]?._provider_metadata?.openai_responses).toEqual({ isRefusal: true });
+      // isRefusal is stored at root level for cross-provider access
+      expect(result.messages[0]?.parts[0]?._provider_metadata?.isRefusal).toBe(true);
     });
 
     it("should translate passthrough items (file_search_call)", () => {

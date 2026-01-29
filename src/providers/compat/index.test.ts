@@ -442,10 +442,11 @@ describe("CompatSpecification", () => {
     it("should handle refusal field at message level", () => {
       const messages = [{ role: "assistant", refusal: "I cannot help with that" }];
       const result = CompatSpecification.toGenAI({ messages, direction: "output" });
+      // isRefusal is stored at root level for cross-provider access
       expect(result.messages[0]?.parts[0]).toMatchObject({
         type: "text",
         content: "I cannot help with that",
-        _provider_metadata: { compat: { isRefusal: true } },
+        _provider_metadata: { isRefusal: true },
       });
     });
 
@@ -457,10 +458,11 @@ describe("CompatSpecification", () => {
         },
       ];
       const result = CompatSpecification.toGenAI({ messages, direction: "output" });
+      // isRefusal is stored at root level for cross-provider access
       expect(result.messages[0]?.parts[0]).toMatchObject({
         type: "text",
         content: "Cannot do that",
-        _provider_metadata: { compat: { isRefusal: true } },
+        _provider_metadata: { isRefusal: true },
       });
     });
   });

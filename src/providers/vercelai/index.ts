@@ -198,20 +198,57 @@ function vercelAIPartToGenAI(part: VercelAIPart, knownPartKeys: string[]): GenAI
         },
       ];
 
-    case "tool-result":
+    case "tool-result": {
+      // Extract the actual value from the typed ToolResultOutput structure
+      const output = part.output as { type: string; value?: unknown; reason?: string };
+      let response: unknown;
+      let isError = false;
+
+      if (output && typeof output === "object" && "type" in output) {
+        // Handle typed ToolResultOutput
+        switch (output.type) {
+          case "text":
+          case "json":
+          case "error-text":
+          case "error-json":
+            response = output.value;
+            isError = output.type === "error-text" || output.type === "error-json";
+            break;
+          case "execution-denied":
+            response = output.reason ?? "Execution denied";
+            isError = true;
+            break;
+          case "content":
+            // Content array - pass through as-is
+            response = output.value;
+            break;
+          default:
+            response = output;
+        }
+      } else {
+        // Raw value (backwards compatibility)
+        response = output;
+      }
+
+      const hasMetadata = Object.keys(metadata).length > 0;
       return [
         {
           type: "tool_call_response",
           id: part.toolCallId,
-          response: part.output,
+          response,
           _provider_metadata: {
+            // Root-level shared fields for cross-provider access
+            toolName: part.toolName,
+            ...(isError ? { isError: true } : {}),
+            // Provider-specific data for round-trip (outputType needed to restore ToolResultOutput structure)
             vercel_ai: {
-              toolName: part.toolName,
-              ...metadata,
+              outputType: output?.type,
+              ...(hasMetadata ? metadata : {}),
             },
           },
         },
       ];
+    }
 
     case "tool-approval-request":
       return [
@@ -386,27 +423,54 @@ function genAIPartToVercelAI(part: GenAIPart, toolCallNameMap: Map<string, strin
       } as VercelAIPart;
 
     case "tool_call_response": {
-      const partMeta = part._provider_metadata?.vercel_ai;
-      // biome-ignore lint/complexity/useLiteralKeys: required for TypeScript index signature access
-      let toolName = partMeta?.["toolName"] as string | undefined;
+      const partMeta = part._provider_metadata;
       const toolId = String((part.id as string | null | undefined) ?? "");
 
-      // Try to infer from matching tool call
+      // Read toolName from root-level shared field (cross-provider access)
+      let toolName = partMeta?.toolName as string | undefined;
+      // Fallback: try to infer from matching tool call if not in shared field
       if (!toolName && toolId && toolCallNameMap.has(toolId)) {
         toolName = toolCallNameMap.get(toolId);
       }
       toolName = toolName ?? "unknown";
 
-      // Extract metadata except toolName
-      const restMeta = partMeta
-        ? extractExtraFields(partMeta as Record<string, unknown>, ["toolName"] as (keyof Record<string, unknown>)[])
+      // Read isError from root-level shared field (cross-provider access)
+      const hasError = partMeta?.isError as boolean | undefined;
+
+      // Get stored output type from provider-specific metadata (for same-provider round-trip)
+      const vercelMeta = partMeta?.vercel_ai as Record<string, unknown> | undefined;
+      // biome-ignore lint/complexity/useLiteralKeys: required for TypeScript index signature access
+      const storedOutputType = vercelMeta?.["outputType"] as string | undefined;
+
+      // Wrap response in typed ToolResultOutput structure
+      let output: unknown;
+      const response = part.response;
+
+      if (storedOutputType) {
+        // Restore original output type from metadata
+        if (storedOutputType === "execution-denied") {
+          output = { type: "execution-denied", reason: typeof response === "string" ? response : undefined };
+        } else if (storedOutputType === "content") {
+          output = { type: "content", value: response };
+        } else {
+          output = { type: storedOutputType, value: response };
+        }
+      } else if (typeof response === "string") {
+        output = { type: hasError ? "error-text" : "text", value: response };
+      } else {
+        output = { type: hasError ? "error-json" : "json", value: response };
+      }
+
+      // Extract metadata except outputType (toolName and isError are at root level now)
+      const restMeta = vercelMeta
+        ? extractExtraFields(vercelMeta, ["outputType"] as (keyof Record<string, unknown>)[])
         : {};
 
       return {
         type: "tool-result",
         toolCallId: toolId,
         toolName,
-        output: part.response,
+        output,
         ...restMeta,
       } as VercelAIPart;
     }

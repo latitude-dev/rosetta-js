@@ -15,7 +15,7 @@ import {
   type OpenAICompletionsUserContentPart,
 } from "$package/providers/openai/completions/schema";
 import { Provider, type ProviderSpecification, type ProviderToGenAIArgs } from "$package/providers/provider";
-import { extractExtraFields } from "$package/utils";
+import { extractExtraFields, withMetadata } from "$package/utils";
 
 export const OpenAICompletionsSpecification = {
   provider: Provider.OpenAICompletions,
@@ -55,12 +55,6 @@ const KNOWN_MESSAGE_KEYS = [
   "tool_call_id",
   "audio",
 ];
-
-/** Adds provider metadata if there's any data to store. */
-function withMetadata(part: GenAIPart, metadata: Record<string, unknown>): GenAIPart {
-  if (Object.keys(metadata).length === 0) return part;
-  return { ...part, _provider_metadata: { openai_completions: metadata } };
-}
 
 /** Converts an OpenAI Completions message to a GenAI message. */
 function openAIMessageToGenAI(message: OpenAICompletionsMessage): GenAIMessage {
@@ -113,17 +107,23 @@ function openAIMessageToGenAI(message: OpenAICompletionsMessage): GenAIMessage {
           ? contentParts[0].content
           : contentParts.map((p) => (p.type === "text" ? p.content : p));
 
-      parts.push(withMetadata({ type: "tool_call_response", id: message.tool_call_id, response }, extraFields));
+      parts.push(
+        withMetadata(
+          { type: "tool_call_response", id: message.tool_call_id, response },
+          "openai_completions",
+          extraFields,
+        ),
+      );
       return { role: "tool", parts };
     }
 
     case "function": {
       // Deprecated function messages - preserve function name in metadata
       parts.push(
-        withMetadata(
-          { type: "tool_call_response", id: null, response: message.content },
-          { ...extraFields, name: message.name },
-        ),
+        withMetadata({ type: "tool_call_response", id: null, response: message.content }, "openai_completions", {
+          ...extraFields,
+          name: message.name,
+        }),
       );
       return { role: "tool", parts };
     }
@@ -152,7 +152,7 @@ function convertUserContentPart(part: OpenAICompletionsUserContentPart): GenAIPa
   switch (part.type) {
     case "text": {
       const extraFields = extractExtraFields(part, ["type", "text"] as (keyof typeof part)[]);
-      return [withMetadata({ type: "text", content: part.text }, extraFields)];
+      return [withMetadata({ type: "text", content: part.text }, "openai_completions", extraFields)];
     }
 
     case "image_url": {
@@ -169,12 +169,13 @@ function convertUserContentPart(part: OpenAICompletionsUserContentPart): GenAIPa
           return [
             withMetadata(
               { type: "blob", modality: "image", mime_type: match[1] || "image/png", content: match[2] || "" },
+              "openai_completions",
               meta,
             ),
           ];
         }
       }
-      return [withMetadata({ type: "uri", modality: "image", uri: url }, meta)];
+      return [withMetadata({ type: "uri", modality: "image", uri: url }, "openai_completions", meta)];
     }
 
     case "input_audio": {
@@ -187,6 +188,7 @@ function convertUserContentPart(part: OpenAICompletionsUserContentPart): GenAIPa
       return [
         withMetadata(
           { type: "blob", modality: "audio", mime_type: format === "wav" ? "audio/wav" : "audio/mp3", content: data },
+          "openai_completions",
           meta,
         ),
       ];
@@ -204,12 +206,12 @@ function convertUserContentPart(part: OpenAICompletionsUserContentPart): GenAIPa
       const meta = { ...(filename ? { filename } : {}), ...partExtra, ...fileExtra };
 
       if (file_id) {
-        return [withMetadata({ type: "file", modality: "document", file_id }, meta)];
+        return [withMetadata({ type: "file", modality: "document", file_id }, "openai_completions", meta)];
       }
       if (file_data) {
-        return [withMetadata({ type: "blob", modality: "document", content: file_data }, meta)];
+        return [withMetadata({ type: "blob", modality: "document", content: file_data }, "openai_completions", meta)];
       }
-      return [withMetadata({ type: "file", modality: "document", file_id: "" }, meta)];
+      return [withMetadata({ type: "file", modality: "document", file_id: "" }, "openai_completions", meta)];
     }
   }
 }
@@ -227,16 +229,18 @@ function convertAssistantMessage(message: OpenAICompletionsAssistantMessage): Ge
         if (part.type === "text") {
           parts.push({ type: "text", content: part.text });
         } else if (part.type === "refusal") {
-          // Mark refusal content - this is semantically meaningful
-          parts.push(withMetadata({ type: "text", content: part.refusal }, { isRefusal: true }));
+          // Mark refusal content at root level for cross-provider access
+          parts.push(
+            withMetadata({ type: "text", content: part.refusal }, "openai_completions", {}, { isRefusal: true }),
+          );
         }
       }
     }
   }
 
-  // Handle top-level refusal field
+  // Handle top-level refusal field - store at root level for cross-provider access
   if (message.refusal) {
-    parts.push(withMetadata({ type: "text", content: message.refusal }, { isRefusal: true }));
+    parts.push(withMetadata({ type: "text", content: message.refusal }, "openai_completions", {}, { isRefusal: true }));
   }
 
   // Handle tool_calls
@@ -261,7 +265,7 @@ function convertAssistantMessage(message: OpenAICompletionsAssistantMessage): Ge
   // Audio field flows through passthrough, so we access it via cast
   const audio = (message as { audio?: { data?: string } }).audio;
   if (audio && "data" in audio && audio.data) {
-    parts.push(withMetadata({ type: "blob", modality: "audio", content: audio.data }, { audio }));
+    parts.push(withMetadata({ type: "blob", modality: "audio", content: audio.data }, "openai_completions", { audio }));
   }
 
   return parts;

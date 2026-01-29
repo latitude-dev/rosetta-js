@@ -332,7 +332,8 @@ describe("OpenAI Completions E2E", () => {
       const textPart = result.messages[0]?.parts[0];
       expect(textPart?.type).toBe("text");
       expect((textPart as { content: string }).content).toBe("I cannot help with that request.");
-      expect(textPart?._provider_metadata?.openai_completions).toEqual({ isRefusal: true });
+      // isRefusal is stored at root level for cross-provider access
+      expect(textPart?._provider_metadata?.isRefusal).toBe(true);
     });
 
     it("should auto-detect OpenAI Completions format", () => {

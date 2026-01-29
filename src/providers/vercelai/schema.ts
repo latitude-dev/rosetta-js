@@ -71,13 +71,95 @@ export const VercelAIToolCallPartSchema = z
   .passthrough();
 export type VercelAIToolCallPart = Infer<typeof VercelAIToolCallPartSchema>;
 
+/** Tool result output - text variant. */
+export const VercelAIToolResultOutputTextSchema = z
+  .object({
+    type: z.literal("text"),
+    value: z.string(),
+  })
+  .passthrough();
+
+/** Tool result output - json variant. */
+export const VercelAIToolResultOutputJsonSchema = z
+  .object({
+    type: z.literal("json"),
+    value: z.unknown(),
+  })
+  .passthrough();
+
+/** Tool result output - error-text variant. */
+export const VercelAIToolResultOutputErrorTextSchema = z
+  .object({
+    type: z.literal("error-text"),
+    value: z.string(),
+  })
+  .passthrough();
+
+/** Tool result output - error-json variant. */
+export const VercelAIToolResultOutputErrorJsonSchema = z
+  .object({
+    type: z.literal("error-json"),
+    value: z.unknown(),
+  })
+  .passthrough();
+
+/** Tool result output - execution-denied variant. */
+export const VercelAIToolResultOutputExecutionDeniedSchema = z
+  .object({
+    type: z.literal("execution-denied"),
+    reason: z.string().optional(),
+  })
+  .passthrough();
+
+/** Tool result output - content variant with nested content parts. */
+export const VercelAIToolResultOutputContentSchema = z
+  .object({
+    type: z.literal("content"),
+    value: z.array(
+      z.union([
+        z.object({ type: z.literal("text"), text: z.string() }).passthrough(),
+        z.object({ type: z.literal("media"), data: z.string(), mediaType: z.string() }).passthrough(),
+        z
+          .object({
+            type: z.literal("file-data"),
+            data: z.string(),
+            mediaType: z.string(),
+            filename: z.string().optional(),
+          })
+          .passthrough(),
+        z.object({ type: z.literal("file-url"), url: z.string() }).passthrough(),
+        z
+          .object({ type: z.literal("file-id"), fileId: z.union([z.string(), z.record(z.string(), z.string())]) })
+          .passthrough(),
+        z.object({ type: z.literal("image-data"), data: z.string(), mediaType: z.string() }).passthrough(),
+        z.object({ type: z.literal("image-url"), url: z.string() }).passthrough(),
+        z
+          .object({ type: z.literal("image-file-id"), fileId: z.union([z.string(), z.record(z.string(), z.string())]) })
+          .passthrough(),
+        z.object({ type: z.literal("custom") }).passthrough(),
+      ]),
+    ),
+  })
+  .passthrough();
+
+/** Union of all tool result output types. */
+export const VercelAIToolResultOutputSchema = z.discriminatedUnion("type", [
+  VercelAIToolResultOutputTextSchema,
+  VercelAIToolResultOutputJsonSchema,
+  VercelAIToolResultOutputErrorTextSchema,
+  VercelAIToolResultOutputErrorJsonSchema,
+  VercelAIToolResultOutputExecutionDeniedSchema,
+  VercelAIToolResultOutputContentSchema,
+]);
+export type VercelAIToolResultOutput = Infer<typeof VercelAIToolResultOutputSchema>;
+
 /** Tool result content part. */
 export const VercelAIToolResultPartSchema = z
   .object({
     type: z.literal("tool-result"),
     toolCallId: z.string(),
     toolName: z.string(),
-    output: z.unknown(),
+    output: VercelAIToolResultOutputSchema,
   })
   .passthrough();
 export type VercelAIToolResultPart = Infer<typeof VercelAIToolResultPartSchema>;

@@ -22,7 +22,7 @@ import {
   AnthropicSystemSchema,
 } from "$package/providers/anthropic/schema";
 import { Provider, type ProviderSpecification, type ProviderToGenAIArgs } from "$package/providers/provider";
-import { extractExtraFields } from "$package/utils";
+import { extractExtraFields, withMetadata } from "$package/utils";
 
 export const AnthropicSpecification = {
   provider: Provider.Anthropic,
@@ -62,12 +62,6 @@ export const AnthropicSpecification = {
 /** Message-level keys that are handled explicitly during conversion (not stored as opaque metadata). */
 const KNOWN_MESSAGE_KEYS = ["role", "content", "id", "type", "model", "stop_reason", "stop_sequence", "usage"];
 
-/** Adds provider metadata if there's any data to store. */
-function withMetadata(part: GenAIPart, metadata: Record<string, unknown>): GenAIPart {
-  if (Object.keys(metadata).length === 0) return part;
-  return { ...part, _provider_metadata: { anthropic: metadata } };
-}
-
 /** Converts Anthropic system instructions to a GenAI system message. */
 function convertSystemToGenAI(system: string | Array<{ type: "text"; text: string }>): GenAIMessage {
   if (typeof system === "string") {
@@ -77,7 +71,7 @@ function convertSystemToGenAI(system: string | Array<{ type: "text"; text: strin
   const parts: GenAIPart[] = [];
   for (const block of system) {
     const extraFields = extractExtraFields(block, ["type", "text"] as (keyof typeof block)[]);
-    parts.push(withMetadata({ type: "text", content: block.text }, extraFields));
+    parts.push(withMetadata({ type: "text", content: block.text }, "anthropic", extraFields));
   }
   return { role: "system", parts };
 }
@@ -143,46 +137,62 @@ function convertContentBlock(block: AnthropicContentBlock): GenAIPart[] {
   switch (block.type) {
     case "text": {
       const extraFields = extractExtraFields(block, KNOWN_TEXT_KEYS as (keyof typeof block)[]);
-      return [withMetadata({ type: "text", content: block.text }, extraFields)];
+      return [withMetadata({ type: "text", content: block.text }, "anthropic", extraFields)];
     }
 
     case "thinking": {
       const extraFields = extractExtraFields(block, KNOWN_THINKING_KEYS as (keyof typeof block)[]);
       // Store signature in metadata for potential round-trip
       return [
-        withMetadata({ type: "reasoning", content: block.thinking }, { signature: block.signature, ...extraFields }),
+        withMetadata({ type: "reasoning", content: block.thinking }, "anthropic", {
+          signature: block.signature,
+          ...extraFields,
+        }),
       ];
     }
 
     case "redacted_thinking": {
       const extraFields = extractExtraFields(block, KNOWN_REDACTED_THINKING_KEYS as (keyof typeof block)[]);
-      // Convert to generic part to preserve the structure
-      return [withMetadata({ type: "redacted_thinking", data: block.data }, extraFields)];
+      // Map to reasoning (closest GenAI equivalent) with originalType at root level for cross-provider access
+      return [
+        withMetadata({ type: "reasoning", content: block.data }, "anthropic", extraFields, {
+          originalType: "redacted_thinking",
+        }),
+      ];
     }
 
     case "tool_use": {
       const extraFields = extractExtraFields(block, KNOWN_TOOL_USE_KEYS as (keyof typeof block)[]);
-      return [withMetadata({ type: "tool_call", id: block.id, name: block.name, arguments: block.input }, extraFields)];
+      return [
+        withMetadata(
+          { type: "tool_call", id: block.id, name: block.name, arguments: block.input },
+          "anthropic",
+          extraFields,
+        ),
+      ];
     }
 
     case "server_tool_use": {
       // Built-in tool like web_search - convert to tool_call
       const extraFields = extractExtraFields(block, KNOWN_TOOL_USE_KEYS as (keyof typeof block)[]);
       return [
-        withMetadata(
-          { type: "tool_call", id: block.id, name: block.name, arguments: block.input },
-          { isServerTool: true, ...extraFields },
-        ),
+        withMetadata({ type: "tool_call", id: block.id, name: block.name, arguments: block.input }, "anthropic", {
+          isServerTool: true,
+          ...extraFields,
+        }),
       ];
     }
 
     case "tool_result": {
       const extraFields = extractExtraFields(block, KNOWN_TOOL_RESULT_KEYS as (keyof typeof block)[]);
       const response = convertToolResultContent(block.content);
+      // Store isError at root level for cross-provider access
       return [
         withMetadata(
           { type: "tool_call_response", id: block.tool_use_id, response },
-          block.is_error ? { is_error: true, ...extraFields } : extraFields,
+          "anthropic",
+          extraFields,
+          block.is_error ? { isError: true } : undefined,
         ),
       ];
     }
@@ -201,10 +211,10 @@ function convertContentBlock(block: AnthropicContentBlock): GenAIPart[] {
       // Convert web search results to tool_call_response
       const extraFields = extractExtraFields(block, ["type", "tool_use_id", "content"] as (keyof typeof block)[]);
       return [
-        withMetadata(
-          { type: "tool_call_response", id: block.tool_use_id, response: block.content },
-          { isWebSearchResult: true, ...extraFields },
-        ),
+        withMetadata({ type: "tool_call_response", id: block.tool_use_id, response: block.content }, "anthropic", {
+          isWebSearchResult: true,
+          ...extraFields,
+        }),
       ];
     }
 
@@ -215,6 +225,7 @@ function convertContentBlock(block: AnthropicContentBlock): GenAIPart[] {
       return [
         withMetadata(
           { type: "search_result", source: block.source, title: block.title, content: textContent },
+          "anthropic",
           extraFields,
         ),
       ];
@@ -271,16 +282,20 @@ function convertImageBlock(
         mime_type: source.media_type || "image/png",
         content: source.data || "",
       },
+      "anthropic",
       { ...extraFields, ...sourceExtra },
     );
   }
   if (source.type === "url") {
     const sourceExtra = extractExtraFields(source, ["type", "url"] as (keyof typeof source)[]);
-    return withMetadata({ type: "uri", modality: "image", uri: source.url || "" }, { ...extraFields, ...sourceExtra });
+    return withMetadata({ type: "uri", modality: "image", uri: source.url || "" }, "anthropic", {
+      ...extraFields,
+      ...sourceExtra,
+    });
   }
 
   // Unknown source type
-  return withMetadata({ type: "image", source }, extraFields);
+  return withMetadata({ type: "image", source }, "anthropic", extraFields);
 }
 
 /** Converts a document source to GenAI parts. */
@@ -299,6 +314,7 @@ function convertDocumentBlock(
             mime_type: source.media_type || "application/pdf",
             content: source.data || "",
           },
+          "anthropic",
           { ...extraFields, ...sourceExtra },
         ),
       ];
@@ -314,6 +330,7 @@ function convertDocumentBlock(
             mime_type: source.media_type || "text/plain",
             content: source.data || "",
           },
+          "anthropic",
           { ...extraFields, ...sourceExtra },
         ),
       ];
@@ -322,7 +339,10 @@ function convertDocumentBlock(
     case "url": {
       const sourceExtra = extractExtraFields(source, ["type", "url"] as (keyof typeof source)[]);
       return [
-        withMetadata({ type: "uri", modality: "document", uri: source.url || "" }, { ...extraFields, ...sourceExtra }),
+        withMetadata({ type: "uri", modality: "document", uri: source.url || "" }, "anthropic", {
+          ...extraFields,
+          ...sourceExtra,
+        }),
       ];
     }
 
@@ -330,7 +350,7 @@ function convertDocumentBlock(
       // Content block source - contains nested content blocks
       const nestedContent = source.content;
       if (typeof nestedContent === "string") {
-        return [withMetadata({ type: "text", content: nestedContent }, extraFields)];
+        return [withMetadata({ type: "text", content: nestedContent }, "anthropic", extraFields)];
       }
       if (Array.isArray(nestedContent)) {
         const parts: GenAIPart[] = [];
@@ -339,10 +359,10 @@ function convertDocumentBlock(
         }
         return parts;
       }
-      return [withMetadata({ type: "document", source }, extraFields)];
+      return [withMetadata({ type: "document", source }, "anthropic", extraFields)];
     }
 
     default:
-      return [withMetadata({ type: "document", source }, extraFields)];
+      return [withMetadata({ type: "document", source }, "anthropic", extraFields)];
   }
 }

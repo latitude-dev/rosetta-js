@@ -259,15 +259,22 @@ function promptlContentToGenAI(content: PromptlContent): GenAIPart[] {
         },
       ];
 
-    case "redacted-reasoning":
-      // Store redacted reasoning as a generic part with the data preserved
+    case "redacted-reasoning": {
+      // Map to reasoning (closest GenAI equivalent), store original type at root level for cross-provider access
+      const hasMetadata = Object.keys(metadata).length > 0;
       return [
         {
-          type: "redacted-reasoning",
+          type: "reasoning",
           content: content.data,
-          ...(hasMetadata ? { _provider_metadata: { promptl: metadata } } : {}),
+          _provider_metadata: {
+            // Root-level shared field for cross-provider access
+            originalType: "redacted-reasoning",
+            // Provider-specific data for round-trip
+            ...(hasMetadata ? { promptl: metadata } : {}),
+          },
         },
       ];
+    }
 
     case "tool-call":
       return [
@@ -280,21 +287,29 @@ function promptlContentToGenAI(content: PromptlContent): GenAIPart[] {
         },
       ];
 
-    case "tool-result":
-      // isError is automatically in metadata via extraFields
+    case "tool-result": {
+      // Check if isError is in the metadata (from extraFields)
+      // biome-ignore lint/complexity/useLiteralKeys: required for TypeScript index signature access
+      const isError = "isError" in metadata ? (metadata["isError"] as boolean) : undefined;
+      // Remove isError from metadata since it's now at root level
+      const { isError: _, ...restMetadata } = metadata as { isError?: boolean };
+      const hasRestMetadata = Object.keys(restMetadata).length > 0;
+
       return [
         {
           type: "tool_call_response",
           id: content.toolCallId,
           response: content.result,
           _provider_metadata: {
-            promptl: {
-              toolName: content.toolName,
-              ...metadata,
-            },
+            // Root-level shared fields for cross-provider access
+            toolName: content.toolName,
+            ...(isError ? { isError: true } : {}),
+            // Provider-specific data for round-trip
+            ...(hasRestMetadata ? { promptl: restMetadata } : {}),
           },
         },
       ];
+    }
   }
 }
 
@@ -327,19 +342,29 @@ function promptlMessageToGenAI(message: PromptlMessage): GenAIMessage {
   if (message.role === "assistant") {
     const assistantMessage = message as PromptlAssistantMessage;
 
+    // Track tool call IDs from content to deduplicate against toolCalls array
+    const toolCallIdsInContent = new Set<string>();
+
     // Handle string content
     if (typeof assistantMessage.content === "string") {
       parts.push({ type: "text", content: assistantMessage.content });
     } else {
       for (const content of assistantMessage.content) {
+        // Track tool-call IDs from content
+        if (content.type === "tool-call" && content.toolCallId) {
+          toolCallIdsInContent.add(content.toolCallId);
+        }
         parts.push(...promptlContentToGenAI(content));
       }
     }
 
-    // Handle toolCalls array (separate from content)
+    // Handle toolCalls array (separate from content) - deduplicate by ID
     if (assistantMessage.toolCalls && assistantMessage.toolCalls.length > 0) {
       for (const toolCall of assistantMessage.toolCalls) {
-        parts.push(promptlToolCallToGenAI(toolCall));
+        // Only add if not already present in content
+        if (!toolCallIdsInContent.has(toolCall.id)) {
+          parts.push(promptlToolCallToGenAI(toolCall));
+        }
       }
     }
   } else if (message.role === "tool") {
@@ -362,15 +387,16 @@ function promptlMessageToGenAI(message: PromptlMessage): GenAIMessage {
         response = contentParts;
       }
 
+      const hasExtraFields = Object.keys(extraFields).length > 0;
       parts.push({
         type: "tool_call_response",
         id: message.toolId,
         response,
         _provider_metadata: {
-          promptl: {
-            toolName: message.toolName,
-            ...extraFields,
-          },
+          // Root-level shared field for cross-provider access
+          toolName: message.toolName,
+          // Provider-specific data for round-trip
+          ...(hasExtraFields ? { promptl: extraFields } : {}),
         },
       });
     } else {
@@ -474,24 +500,30 @@ function genAIPartToPromptl(part: GenAIPart): PromptlContent | null {
       // This is handled at the message level for tool role
       return null;
 
-    case "reasoning":
-      // Convert to Promptl reasoning content
+    case "reasoning": {
+      // Read originalType from root-level shared field (cross-provider access)
+      const originalType = part._provider_metadata?.originalType as string | undefined;
+
+      if (originalType === "redacted-reasoning") {
+        // Restore the original redacted-reasoning type
+        // Get provider-specific metadata for same-provider round-trip
+        const promptlMeta = part._provider_metadata?.promptl ?? {};
+        return {
+          type: "redacted-reasoning",
+          data: part.content,
+          ...promptlMeta,
+        } as PromptlContent;
+      }
+
+      // Regular reasoning content
       return {
         type: "reasoning",
         text: part.content,
         ...extraFromMeta,
       } as PromptlContent;
+    }
 
     default:
-      // Check for redacted-reasoning (custom type)
-      if (part.type === "redacted-reasoning" && "content" in part) {
-        return {
-          type: "redacted-reasoning",
-          // biome-ignore lint/complexity/useLiteralKeys: required for TypeScript index signature access
-          data: part["content"] as string,
-          ...extraFromMeta,
-        } as PromptlContent;
-      }
       // Generic part - convert to text if it has content, otherwise skip
       if ("content" in part && typeof part.content === "string") {
         return {
@@ -518,13 +550,13 @@ function genAIMessageToPromptl(message: GenAIMessage, toolCallNameMap: Map<strin
 
     for (const part of message.parts) {
       if (part.type === "tool_call_response") {
-        const partMeta = part._provider_metadata?.promptl;
-        // biome-ignore lint/complexity/useLiteralKeys: required for TypeScript index signature access
-        let toolName = partMeta?.["toolName"] as string | undefined;
+        const partMeta = part._provider_metadata;
         // Type assertion needed because GenAIGenericPartSchema overlaps with literal types
         const toolId = String((part.id as string | null | undefined) ?? "");
 
-        // If no toolName in metadata, try to infer from matching tool call
+        // Read toolName from root-level shared field (cross-provider access)
+        let toolName = partMeta?.toolName as string | undefined;
+        // Fallback: try to infer from matching tool call if not in shared field
         if (!toolName && toolId && toolCallNameMap.has(toolId)) {
           toolName = toolCallNameMap.get(toolId);
         }
@@ -546,15 +578,15 @@ function genAIMessageToPromptl(message: GenAIMessage, toolCallNameMap: Map<strin
           content = [{ type: "text", text: JSON.stringify(part.response) }];
         }
 
-        // Extract all metadata except toolName which is used explicitly above
-        const partExtra = partMeta ? extractExtraFields(partMeta, ["toolName"]) : {};
+        // Get provider-specific metadata for same-provider round-trip
+        const promptlPartMeta = partMeta?.promptl ?? {};
 
         toolMessages.push({
           role: "tool",
           toolName: String(toolName),
           toolId,
           content,
-          ...partExtra,
+          ...promptlPartMeta,
         } as PromptlMessage);
       }
     }

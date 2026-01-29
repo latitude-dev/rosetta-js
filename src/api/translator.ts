@@ -4,6 +4,7 @@
  * The main API for translating messages between LLM providers.
  */
 
+import type { GenAIMessage } from "$package/core/genai";
 import { DEFAULT_INFER_PRIORITY, inferProvider } from "$package/core/infer";
 import type { InputMessages, InputSystem } from "$package/core/input";
 import {
@@ -24,6 +25,20 @@ export type TranslatorConfig = {
    * Cannot be empty if provided.
    */
   inferPriority?: Provider[];
+
+  /**
+   * Whether to filter out empty messages during translation.
+   *
+   * When true, messages that have no meaningful content are removed from the output:
+   * - Messages with empty parts array
+   * - Messages where all parts are empty text parts (empty or whitespace-only)
+   *   AND there are no tool_call or tool_call_response parts
+   *
+   * This is useful for cleaning up conversation history before sending to an LLM.
+   *
+   * @default false
+   */
+  filterEmptyMessages?: boolean;
 };
 
 /** Options for the translate/safeTranslate methods. */
@@ -67,6 +82,36 @@ export type SafeTranslateResult<To extends ProviderTarget> =
   | ({ error: Error } & Voided<TranslateResult<To>>);
 
 /**
+ * Filters out empty messages from GenAI messages.
+ * A message is considered empty if:
+ * - It has no parts, OR
+ * - All parts are empty text parts (empty or whitespace-only)
+ *
+ * Messages with any non-text parts (tool_call, reasoning, blob, etc.) are always kept.
+ */
+function filterEmptyGenAIMessages(messages: GenAIMessage[]): GenAIMessage[] {
+  return messages.filter((message) => {
+    // Empty if no parts
+    if (message.parts.length === 0) {
+      return false;
+    }
+
+    // Check if all parts are empty text parts
+    const allEmptyText = message.parts.every((part) => {
+      if (part.type === "text") {
+        const content = (part as { content: string }).content;
+        return !content || content.trim() === "";
+      }
+      // Non-text parts (tool_call, reasoning, blob, etc.) count as non-empty
+      return false;
+    });
+
+    // Keep if not all empty text
+    return !allEmptyText;
+  });
+}
+
+/**
  * Translator class for converting messages between LLM providers.
  *
  * @example
@@ -82,12 +127,14 @@ export type SafeTranslateResult<To extends ProviderTarget> =
  */
 export class Translator {
   private readonly inferPriority: Provider[];
+  private readonly filterEmptyMessages: boolean;
 
   constructor(config: TranslatorConfig = {}) {
     if (config.inferPriority !== undefined && config.inferPriority.length === 0) {
       throw new Error("Infer priority list cannot be empty if provided");
     }
     this.inferPriority = config.inferPriority ?? DEFAULT_INFER_PRIORITY;
+    this.filterEmptyMessages = config.filterEmptyMessages ?? false;
   }
 
   /**
@@ -120,6 +167,9 @@ export class Translator {
     // Convert to GenAI format (provider's toGenAI validates input with Zod)
     const genai = sourceSpec.toGenAI({ messages, system, direction });
 
+    // Filter empty messages at the GenAI intermediate level (if enabled)
+    const filteredMessages = this.filterEmptyMessages ? filterEmptyGenAIMessages(genai.messages) : genai.messages;
+
     // Get target provider specification
     const targetSpec = getProviderSpecification(to);
     if (!targetSpec?.fromGenAI) {
@@ -127,7 +177,7 @@ export class Translator {
     }
 
     // Convert from GenAI to target format
-    const converted = targetSpec.fromGenAI({ messages: genai.messages, direction });
+    const converted = targetSpec.fromGenAI({ messages: filteredMessages, direction });
 
     return { messages: converted.messages, system: converted.system };
   }

@@ -310,9 +310,8 @@ describe("AnthropicSpecification", () => {
           id: "toolu_abc123",
           response: "Error: API rate limit exceeded",
         });
-        expect(result.messages[0]?.parts[0]?._provider_metadata?.anthropic).toMatchObject({
-          is_error: true,
-        });
+        // isError is stored at root level for cross-provider access
+        expect(result.messages[0]?.parts[0]?._provider_metadata?.isError).toBe(true);
       });
 
       it("should convert tool result with array content", () => {
@@ -431,7 +430,7 @@ describe("AnthropicSpecification", () => {
         expect(result.messages[0]?.parts[1]).toEqual({ type: "text", content: "Here's my answer." });
       });
 
-      it("should convert assistant message with redacted thinking block", () => {
+      it("should convert assistant message with redacted thinking block to reasoning", () => {
         const result = AnthropicSpecification.toGenAI({
           messages: [
             {
@@ -447,9 +446,13 @@ describe("AnthropicSpecification", () => {
           direction: "output",
         });
 
+        // redacted_thinking maps to reasoning (closest GenAI equivalent) with originalType at root level
         expect(result.messages[0]?.parts[0]).toMatchObject({
-          type: "redacted_thinking",
-          data: "encryptedthinkingdata...",
+          type: "reasoning",
+          content: "encryptedthinkingdata...",
+          _provider_metadata: {
+            originalType: "redacted_thinking",
+          },
         });
       });
 

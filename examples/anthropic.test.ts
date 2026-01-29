@@ -493,9 +493,8 @@ describe("Anthropic E2E", () => {
         to: Provider.GenAI,
       });
 
-      expect(result.messages[0]?.parts[0]?._provider_metadata?.anthropic).toMatchObject({
-        is_error: true,
-      });
+      // isError is stored at root level for cross-provider access
+      expect(result.messages[0]?.parts[0]?._provider_metadata?.isError).toBe(true);
     });
   });
 });

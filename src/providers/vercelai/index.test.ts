@@ -331,8 +331,8 @@ describe("VercelAISpecification", () => {
         expect(result.messages[0]?.role).toBe("tool");
         expect(result.messages[0]?.parts[0]?.type).toBe("tool_call_response");
         expect((result.messages[0]?.parts[0] as { id: string }).id).toBe("call-123");
-        // biome-ignore lint/complexity/useLiteralKeys: required for TypeScript index signature access
-        expect(result.messages[0]?.parts[0]?._provider_metadata?.vercel_ai?.["toolName"]).toBe("get_weather");
+        // toolName is stored at root level for cross-provider access
+        expect(result.messages[0]?.parts[0]?._provider_metadata?.toolName).toBe("get_weather");
       });
     });
 
@@ -596,6 +596,29 @@ describe("VercelAISpecification", () => {
         expect(content[0]?.type).toBe("reasoning");
         expect(content[0]?.text).toBe("Let me think...");
       });
+
+      it("should convert reasoning part (originally redacted-reasoning) to VercelAI reasoning", () => {
+        // Redacted-reasoning from source providers is now converted to reasoning with metadata
+        const messages: GenAIMessage[] = [
+          {
+            role: "assistant",
+            parts: [
+              {
+                type: "reasoning",
+                content: "hidden-data",
+                _provider_metadata: { promptl: { originalType: "redacted-reasoning" } },
+              },
+            ],
+          },
+        ];
+
+        const result = VercelAISpecification.fromGenAI({ messages, direction: "output" });
+
+        // VercelAI doesn't have redacted-reasoning, so it becomes regular reasoning
+        const content = result.messages[0]?.content as Array<{ type: string; text: string }>;
+        expect(content[0]?.type).toBe("reasoning");
+        expect(content[0]?.text).toBe("hidden-data");
+      });
     });
 
     describe("tool_call content", () => {
@@ -665,7 +688,8 @@ describe("VercelAISpecification", () => {
         expect(content[0]?.type).toBe("tool-result");
         expect(content[0]?.toolCallId).toBe("call-123");
         expect(content[0]?.toolName).toBe("my_tool");
-        expect(content[0]?.output).toBe("Success!");
+        // Output is now wrapped in typed ToolResultOutput structure
+        expect(content[0]?.output).toEqual({ type: "text", value: "Success!" });
       });
 
       it("should infer toolName from matching tool_call when not in metadata", () => {
@@ -699,6 +723,28 @@ describe("VercelAISpecification", () => {
 
         const toolContent = result.messages[0]?.content as Array<{ toolName: string }>;
         expect(toolContent[0]?.toolName).toBe("unknown");
+      });
+
+      it("should extract toolName from root-level metadata (cross-provider)", () => {
+        const messages: GenAIMessage[] = [
+          {
+            role: "tool",
+            parts: [
+              {
+                type: "tool_call_response",
+                id: "call-123",
+                response: "Result",
+                // toolName is stored at root level for cross-provider access
+                _provider_metadata: { toolName: "cross_provider_tool" },
+              },
+            ],
+          },
+        ];
+
+        const result = VercelAISpecification.fromGenAI({ messages, direction: "output" });
+
+        const toolContent = result.messages[0]?.content as Array<{ toolName: string }>;
+        expect(toolContent[0]?.toolName).toBe("cross_provider_tool");
       });
     });
 
@@ -966,7 +1012,14 @@ describe("VercelAISpecification", () => {
     it("should validate a valid tool message", () => {
       const message = {
         role: "tool" as const,
-        content: [{ type: "tool-result" as const, toolCallId: "1", toolName: "test", output: {} }],
+        content: [
+          {
+            type: "tool-result" as const,
+            toolCallId: "1",
+            toolName: "test",
+            output: { type: "json" as const, value: {} },
+          },
+        ],
       };
 
       const result = VercelAISpecification.messageSchema.safeParse(message);

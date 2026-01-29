@@ -332,9 +332,8 @@ describe("GoogleSpecification", () => {
           id: null,
           response: { temperature: 72, condition: "sunny" },
         });
-        expect(result.messages[0]?.parts[0]?._provider_metadata?.google).toMatchObject({
-          name: "get_weather",
-        });
+        // toolName is stored at root level for cross-provider access
+        expect(result.messages[0]?.parts[0]?._provider_metadata?.toolName).toBe("get_weather");
       });
 
       it("should convert function response with id", () => {

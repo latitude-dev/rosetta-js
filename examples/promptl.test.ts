@@ -514,7 +514,7 @@ You are a {{ role }} assistant specializing in {{ domain }}.
   });
 
   describe("redacted reasoning content", () => {
-    it("should translate redacted-reasoning content", () => {
+    it("should translate redacted-reasoning content to reasoning with originalType in metadata", () => {
       const messages = [
         {
           role: "assistant" as const,
@@ -532,8 +532,11 @@ You are a {{ role }} assistant specializing in {{ domain }}.
         to: Provider.GenAI,
       });
 
-      expect(result.messages[0]?.parts[0]?.type).toBe("redacted-reasoning");
+      // redacted-reasoning maps to reasoning (closest GenAI equivalent) with originalType at root level
+      expect(result.messages[0]?.parts[0]?.type).toBe("reasoning");
       expect((result.messages[0]?.parts[0] as { content: string }).content).toBe("encrypted-reasoning-data-xyz");
+      // originalType is stored at root level for cross-provider access
+      expect(result.messages[0]?.parts[0]?._provider_metadata?.originalType).toBe("redacted-reasoning");
     });
   });
 

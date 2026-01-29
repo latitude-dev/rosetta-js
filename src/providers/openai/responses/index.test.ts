@@ -235,7 +235,8 @@ describe("OpenAIResponsesSpecification", () => {
       const part = result.messages[0]?.parts[0];
       expect(part?.type).toBe("text");
       expect((part as { content: string }).content).toBe("I cannot help with that.");
-      expect(part?._provider_metadata?.openai_responses).toEqual({ isRefusal: true });
+      // isRefusal is stored at root level for cross-provider access
+      expect(part?._provider_metadata?.isRefusal).toBe(true);
     });
   });
 

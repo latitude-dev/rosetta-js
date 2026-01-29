@@ -22,7 +22,7 @@ import {
   GoogleSystemSchema,
 } from "$package/providers/google/schema";
 import { Provider, type ProviderSpecification, type ProviderToGenAIArgs } from "$package/providers/provider";
-import { extractExtraFields, inferModality } from "$package/utils";
+import { extractExtraFields, inferModality, withMetadata } from "$package/utils";
 
 export const GoogleSpecification = {
   provider: Provider.Google,
@@ -60,12 +60,6 @@ export const GoogleSpecification = {
 
 /** Message-level keys that are handled explicitly during conversion. */
 const KNOWN_CONTENT_KEYS = ["role", "parts"];
-
-/** Adds provider metadata if there's any data to store. */
-function withMetadata(part: GenAIPart, metadata: Record<string, unknown>): GenAIPart {
-  if (Object.keys(metadata).length === 0) return part;
-  return { ...part, _provider_metadata: { google: metadata } };
-}
 
 /** Converts Google system instructions to a GenAI system message. */
 function convertSystemToGenAI(system: unknown): GenAIMessage {
@@ -161,9 +155,9 @@ function convertPart(part: GooglePart): GenAIPart[] {
         // biome-ignore lint/complexity/useLiteralKeys: TypeScript requires bracket notation for index signature access
         metadata["thoughtSignature"] = part["thoughtSignature"];
       }
-      return [withMetadata({ type: "reasoning", content: part.text }, metadata)];
+      return [withMetadata({ type: "reasoning", content: part.text }, "google", metadata)];
     }
-    return [withMetadata({ type: "text", content: part.text }, extraFields)];
+    return [withMetadata({ type: "text", content: part.text }, "google", extraFields)];
   }
 
   // Inline blob data (images, audio, etc.)
@@ -179,6 +173,7 @@ function convertPart(part: GooglePart): GenAIPart[] {
           mime_type: blob.mimeType ?? null,
           content: blob.data ?? "",
         },
+        "google",
         { ...extraFields, ...blobExtra },
       ),
     ];
@@ -197,6 +192,7 @@ function convertPart(part: GooglePart): GenAIPart[] {
           mime_type: file.mimeType ?? null,
           uri: file.fileUri ?? "",
         },
+        "google",
         { ...extraFields, ...fileExtra },
       ),
     ];
@@ -214,6 +210,7 @@ function convertPart(part: GooglePart): GenAIPart[] {
           name: fc.name ?? "",
           arguments: fc.args,
         },
+        "google",
         { ...extraFields, ...fcExtra },
       ),
     ];
@@ -223,6 +220,8 @@ function convertPart(part: GooglePart): GenAIPart[] {
   if (part.functionResponse !== undefined) {
     const fr = part.functionResponse;
     const frExtra = extractExtraFields(fr, ["id", "name", "response"] as (keyof typeof fr)[]);
+    const combinedMeta = { ...extraFields, ...frExtra };
+    // Store toolName at root level for cross-provider access
     return [
       withMetadata(
         {
@@ -230,7 +229,9 @@ function convertPart(part: GooglePart): GenAIPart[] {
           id: fr.id ?? null,
           response: fr.response,
         },
-        { name: fr.name, ...extraFields, ...frExtra },
+        "google",
+        combinedMeta,
+        fr.name ? { toolName: fr.name } : undefined,
       ),
     ];
   }
@@ -246,6 +247,7 @@ function convertPart(part: GooglePart): GenAIPart[] {
           code: code.code ?? "",
           language: code.language,
         },
+        "google",
         { ...extraFields, ...codeExtra },
       ),
     ];
@@ -262,6 +264,7 @@ function convertPart(part: GooglePart): GenAIPart[] {
           outcome: result.outcome,
           output: result.output ?? "",
         },
+        "google",
         { ...extraFields, ...resultExtra },
       ),
     ];
