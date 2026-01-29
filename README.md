@@ -4,6 +4,8 @@ The translation layer for LLM provider messages.
 
 Rosetta converts messages between different LLM providers using [**GenAI**](https://opentelemetry.io/docs/specs/semconv/registry/attributes/gen-ai/), a standardized intermediate format. Just pass in messages from any provider—OpenAI, Anthropic, Google, or even custom formats—and get consistent output. No manual mapping required.
 
+> Rosetta was made by [Latitude](https://latitude.so?utm_source=github&utm_medium=oss&utm_campaign=rosetta_ai) as an effort to standardize the observability layer for any LLM application!
+
 ## Features
 
 - 🔄 Convert messages from any supported provider to a unified GenAI format
