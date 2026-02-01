@@ -50,9 +50,9 @@ export type {
 export {
   Provider,
   type ProviderMessage,
-  type ProviderMetadata,
   type ProviderSource,
   type ProviderSpecification,
   type ProviderSystem,
   type ProviderTarget,
 } from "$package/providers";
+export type { ProviderMetadataMode } from "$package/utils";

@@ -191,6 +191,7 @@ describe("GenAISpecification", () => {
       const result = GenAISpecification.fromGenAI?.({
         messages,
         direction: "output",
+        providerMetadata: "strip",
       });
 
       expect(result?.messages).toEqual(messages);
@@ -212,6 +213,7 @@ describe("GenAISpecification", () => {
       const result = GenAISpecification.fromGenAI?.({
         messages,
         direction: "output",
+        providerMetadata: "strip",
       });
 
       expect(result?.messages).toHaveLength(1);
@@ -239,6 +241,7 @@ describe("GenAISpecification", () => {
       const result = GenAISpecification.fromGenAI?.({
         messages,
         direction: "output",
+        providerMetadata: "strip",
       });
 
       expect(result?.messages).toHaveLength(1);
@@ -262,6 +265,7 @@ describe("GenAISpecification", () => {
       const result = GenAISpecification.fromGenAI?.({
         messages,
         direction: "output",
+        providerMetadata: "strip",
       });
 
       expect(result?.messages).toHaveLength(2);
@@ -286,6 +290,7 @@ describe("GenAISpecification", () => {
       const result = GenAISpecification.fromGenAI?.({
         messages,
         direction: "output",
+        providerMetadata: "strip",
       });
 
       expect(result?.messages).toHaveLength(1);
@@ -314,6 +319,7 @@ describe("GenAISpecification", () => {
       const fromResult = GenAISpecification.fromGenAI?.({
         messages: toResult.messages,
         direction: "output",
+        providerMetadata: "strip",
       });
 
       expect(fromResult?.messages).toEqual(originalMessages);
@@ -575,7 +581,7 @@ describe("GenAISpecification", () => {
       expect(result.messages[0]?.parts[0]).toHaveProperty("custom", "field");
     });
 
-    it("should preserve unknown fields through fromGenAI conversion", () => {
+    it("should preserve unknown fields through fromGenAI conversion with passthrough", () => {
       const messages = [
         {
           role: "assistant",
@@ -587,13 +593,14 @@ describe("GenAISpecification", () => {
       const result = GenAISpecification.fromGenAI?.({
         messages: messages as never,
         direction: "output",
+        providerMetadata: "passthrough",
       });
 
       expect(result?.messages[0]).toHaveProperty("extra_message_field", "value");
       expect(result?.messages[0]?.parts[0]).toHaveProperty("custom", "field");
     });
 
-    it("should preserve unknown fields through round-trip conversion", () => {
+    it("should preserve unknown fields through round-trip conversion with passthrough", () => {
       const originalMessages = [
         {
           role: "user",
@@ -616,6 +623,7 @@ describe("GenAISpecification", () => {
       const fromResult = GenAISpecification.fromGenAI?.({
         messages: toResult.messages,
         direction: "output",
+        providerMetadata: "passthrough",
       });
 
       expect(fromResult?.messages[0]).toHaveProperty("custom_message_field", "message_value");

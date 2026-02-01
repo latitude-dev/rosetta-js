@@ -468,7 +468,8 @@ describe("Anthropic E2E", () => {
         to: Provider.GenAI,
       });
 
-      expect(result.messages[0]?.parts[0]?._provider_metadata?.anthropic).toMatchObject({
+      // Extra fields are now at root level of _provider_metadata
+      expect(result.messages[0]?.parts[0]?._provider_metadata).toMatchObject({
         cache_control: { type: "ephemeral" },
       });
     });
@@ -493,8 +494,11 @@ describe("Anthropic E2E", () => {
         to: Provider.GenAI,
       });
 
-      // isError is stored at root level for cross-provider access
-      expect(result.messages[0]?.parts[0]?._provider_metadata?.isError).toBe(true);
+      // isError is stored in _known_fields for cross-provider access
+      expect(
+        (result.messages[0]?.parts[0]?._provider_metadata?._known_fields as Record<string, unknown> | undefined)
+          ?.isError,
+      ).toBe(true);
     });
   });
 });

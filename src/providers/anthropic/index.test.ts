@@ -87,7 +87,7 @@ describe("AnthropicSpecification", () => {
           direction: "input",
         });
 
-        expect(result.messages[0]?.parts[0]?._provider_metadata?.anthropic).toMatchObject({
+        expect(result.messages[0]?.parts[0]?._provider_metadata).toMatchObject({
           cache_control: { type: "ephemeral" },
         });
       });
@@ -310,8 +310,11 @@ describe("AnthropicSpecification", () => {
           id: "toolu_abc123",
           response: "Error: API rate limit exceeded",
         });
-        // isError is stored at root level for cross-provider access
-        expect(result.messages[0]?.parts[0]?._provider_metadata?.isError).toBe(true);
+        // isError is stored in known fields for cross-provider access
+        expect(
+          // biome-ignore lint/complexity/useLiteralKeys: required for index signature access
+          (result.messages[0]?.parts[0]?._provider_metadata?._known_fields as Record<string, unknown>)?.["isError"],
+        ).toBe(true);
       });
 
       it("should convert tool result with array content", () => {
@@ -424,7 +427,7 @@ describe("AnthropicSpecification", () => {
           type: "reasoning",
           content: "Let me think about this carefully...",
         });
-        expect(result.messages[0]?.parts[0]?._provider_metadata?.anthropic).toMatchObject({
+        expect(result.messages[0]?.parts[0]?._provider_metadata).toMatchObject({
           signature: "abc123signature",
         });
         expect(result.messages[0]?.parts[1]).toEqual({ type: "text", content: "Here's my answer." });
@@ -446,12 +449,12 @@ describe("AnthropicSpecification", () => {
           direction: "output",
         });
 
-        // redacted_thinking maps to reasoning (closest GenAI equivalent) with originalType at root level
+        // redacted_thinking maps to reasoning (closest GenAI equivalent) with originalType in known fields
         expect(result.messages[0]?.parts[0]).toMatchObject({
           type: "reasoning",
           content: "encryptedthinkingdata...",
           _provider_metadata: {
-            originalType: "redacted_thinking",
+            _known_fields: { originalType: "redacted_thinking" },
           },
         });
       });
@@ -480,7 +483,7 @@ describe("AnthropicSpecification", () => {
           name: "web_search",
           arguments: { query: "latest news" },
         });
-        expect(result.messages[0]?.parts[0]?._provider_metadata?.anthropic).toMatchObject({
+        expect(result.messages[0]?.parts[0]?._provider_metadata).toMatchObject({
           isServerTool: true,
         });
       });
@@ -513,7 +516,7 @@ describe("AnthropicSpecification", () => {
           type: "tool_call_response",
           id: "srvtoolu_abc123",
         });
-        expect(result.messages[0]?.parts[0]?._provider_metadata?.anthropic).toMatchObject({
+        expect(result.messages[0]?.parts[0]?._provider_metadata).toMatchObject({
           isWebSearchResult: true,
         });
       });
@@ -699,7 +702,7 @@ describe("AnthropicSpecification", () => {
           direction: "input",
         });
 
-        expect(result.messages[0]?._provider_metadata?.anthropic).toMatchObject({
+        expect(result.messages[0]?._provider_metadata).toMatchObject({
           unknown_field: "should be preserved",
           another_field: { nested: true },
         });
@@ -718,7 +721,7 @@ describe("AnthropicSpecification", () => {
           direction: "output",
         });
 
-        expect(result.messages[0]?._provider_metadata?.anthropic).toMatchObject({
+        expect(result.messages[0]?._provider_metadata).toMatchObject({
           future_field: "new API field",
           metadata: { version: 2 },
         });
@@ -741,7 +744,7 @@ describe("AnthropicSpecification", () => {
           direction: "input",
         });
 
-        expect(result.messages[0]?.parts[0]?._provider_metadata?.anthropic).toMatchObject({
+        expect(result.messages[0]?.parts[0]?._provider_metadata).toMatchObject({
           cache_control: { type: "ephemeral" },
         });
       });
@@ -772,7 +775,7 @@ describe("AnthropicSpecification", () => {
         });
 
         // biome-ignore lint/complexity/useLiteralKeys: TypeScript requires bracket notation for index signature access
-        expect(result.messages[0]?.parts[0]?._provider_metadata?.anthropic?.["citations"]).toBeDefined();
+        expect(result.messages[0]?.parts[0]?._provider_metadata?.["citations"]).toBeDefined();
       });
     });
 
@@ -860,7 +863,7 @@ describe("AnthropicSpecification", () => {
           direction: "output",
         });
 
-        expect(result.messages[0]?._provider_metadata?.anthropic).toMatchObject({
+        expect(result.messages[0]?._provider_metadata).toMatchObject({
           future_field: "should be preserved",
         });
       });

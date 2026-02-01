@@ -332,8 +332,11 @@ describe("GoogleSpecification", () => {
           id: null,
           response: { temperature: 72, condition: "sunny" },
         });
-        // toolName is stored at root level for cross-provider access
-        expect(result.messages[0]?.parts[0]?._provider_metadata?.toolName).toBe("get_weather");
+        // toolName is stored in _known_fields for cross-provider access
+        expect(
+          // biome-ignore lint/complexity/useLiteralKeys: required for index signature access
+          (result.messages[0]?.parts[0]?._provider_metadata?._known_fields as Record<string, unknown>)?.["toolName"],
+        ).toBe("get_weather");
       });
 
       it("should convert function response with id", () => {
@@ -397,7 +400,7 @@ describe("GoogleSpecification", () => {
           direction: "output",
         });
 
-        expect(result.messages[0]?.parts[0]?._provider_metadata?.google).toMatchObject({
+        expect(result.messages[0]?.parts[0]?._provider_metadata).toMatchObject({
           thoughtSignature: "sig123",
         });
       });
@@ -465,7 +468,7 @@ describe("GoogleSpecification", () => {
           direction: "input",
         });
 
-        expect(result.messages[0]?._provider_metadata?.google).toMatchObject({
+        expect(result.messages[0]?._provider_metadata).toMatchObject({
           customField: "custom value",
         });
       });
@@ -489,7 +492,7 @@ describe("GoogleSpecification", () => {
           direction: "input",
         });
 
-        expect(result.messages[0]?.parts[0]?._provider_metadata?.google).toMatchObject({
+        expect(result.messages[0]?.parts[0]?._provider_metadata).toMatchObject({
           displayName: "test.png",
         });
       });
@@ -513,7 +516,7 @@ describe("GoogleSpecification", () => {
           direction: "input",
         });
 
-        expect(result.messages[0]?.parts[0]?._provider_metadata?.google).toMatchObject({
+        expect(result.messages[0]?.parts[0]?._provider_metadata).toMatchObject({
           displayName: "my-video.mp4",
         });
       });

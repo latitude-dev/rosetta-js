@@ -404,7 +404,7 @@ describe("cross-provider translation", () => {
               id: "call_123",
               response: { temperature: 72 },
               _provider_metadata: {
-                promptl: { toolName: "get_weather" },
+                _known_fields: { toolName: "get_weather" },
               },
             },
           ],
@@ -773,20 +773,25 @@ describe("edge cases", () => {
           {
             type: "text",
             content: "Hello",
-            _provider_metadata: { promptl: { field: "value" } },
+            _provider_metadata: { field: "value" },
           },
         ],
-        _provider_metadata: { promptl: { messageField: "messageValue" } },
+        _provider_metadata: { messageField: "messageValue" },
       },
     ];
 
+    // GenAI to GenAI uses "passthrough" mode automatically for lossless round-trips
+    // In passthrough mode, extra fields from _provider_metadata are spread directly on entities
     const result = translator.translate(messages, {
       from: Provider.GenAI,
       to: Provider.GenAI,
     });
 
-    expect(result.messages[0]?._provider_metadata).toEqual({ promptl: { messageField: "messageValue" } });
-    expect(result.messages[0]?.parts[0]?._provider_metadata).toEqual({ promptl: { field: "value" } });
+    // In passthrough mode, extra fields are spread on the entity directly
+    // biome-ignore lint/complexity/useLiteralKeys: required for index signature access
+    expect((result.messages[0] as Record<string, unknown>)["messageField"]).toBe("messageValue");
+    // biome-ignore lint/complexity/useLiteralKeys: required for index signature access
+    expect((result.messages[0]?.parts[0] as Record<string, unknown>)["field"]).toBe("value");
   });
 
   describe("filterEmptyMessages config", () => {
@@ -900,6 +905,343 @@ describe("edge cases", () => {
 
       // Whitespace-only text is treated as empty
       expect(result.messages).toHaveLength(1);
+    });
+  });
+
+  describe("providerMetadata passthrough preserves extra fields across translations", () => {
+    it("should produce same result: direct Promptl→VercelAI vs Promptl→GenAI→VercelAI", () => {
+      // This is the original use case that motivated the metadata refactoring:
+      // Promptl has a "providerOptions" field specifically for VercelAI to use
+      const promptlMessages = [
+        {
+          role: "user" as const,
+          content: [{ type: "text" as const, text: "Hello" }],
+          providerOptions: {
+            anthropic: {
+              cacheControl: {
+                type: "ephemeral",
+              },
+            },
+          },
+        },
+      ];
+
+      // Option 1: Direct Promptl → VercelAI with passthrough
+      const directTranslator = new Translator({ providerMetadata: "passthrough" });
+      const directResult = directTranslator.translate(promptlMessages, {
+        from: Provider.Promptl,
+        to: Provider.VercelAI,
+      });
+
+      // Option 2: Promptl → GenAI (preserve for storage), then GenAI → VercelAI (passthrough)
+      const storageTranslator = new Translator({ providerMetadata: "preserve" });
+      const genaiResult = storageTranslator.translate(promptlMessages, {
+        from: Provider.Promptl,
+        to: Provider.GenAI,
+      });
+
+      // Verify GenAI has the metadata preserved
+      expect(genaiResult.messages[0]?._provider_metadata).toBeDefined();
+      // biome-ignore lint/complexity/useLiteralKeys: required for index signature access
+      expect(genaiResult.messages[0]?._provider_metadata?.["providerOptions"]).toEqual({
+        anthropic: { cacheControl: { type: "ephemeral" } },
+      });
+
+      // Now translate the stored GenAI messages to VercelAI with passthrough
+      const passthroughTranslator = new Translator({ providerMetadata: "passthrough" });
+      const twoStepResult = passthroughTranslator.translate(genaiResult.messages, {
+        from: Provider.GenAI,
+        to: Provider.VercelAI,
+      });
+
+      // Both should have the providerOptions field directly on the message
+      const directMessage = directResult.messages[0] as Record<string, unknown>;
+      const twoStepMessage = twoStepResult.messages[0] as Record<string, unknown>;
+
+      // biome-ignore lint/complexity/useLiteralKeys: required for index signature access
+      expect(directMessage["providerOptions"]).toEqual({
+        anthropic: { cacheControl: { type: "ephemeral" } },
+      });
+      // biome-ignore lint/complexity/useLiteralKeys: required for index signature access
+      expect(twoStepMessage["providerOptions"]).toEqual({
+        anthropic: { cacheControl: { type: "ephemeral" } },
+      });
+
+      // The results should be equivalent (both have providerOptions as direct property)
+      // biome-ignore lint/complexity/useLiteralKeys: required for index signature access
+      expect(directMessage["providerOptions"]).toEqual(twoStepMessage["providerOptions"]);
+    });
+
+    it("should preserve providerOptions through preserve mode for later passthrough", () => {
+      const promptlMessages = [
+        {
+          role: "user" as const,
+          content: [{ type: "text" as const, text: "What's the weather?" }],
+          providerOptions: {
+            openai: { user: "test-user-id" },
+            anthropic: { cacheControl: { type: "ephemeral" } },
+          },
+        },
+      ];
+
+      // Step 1: Translate to GenAI with preserve (simulating storage)
+      const preserveTranslator = new Translator({ providerMetadata: "preserve" });
+      const storedMessages = preserveTranslator.translate(promptlMessages, {
+        from: Provider.Promptl,
+        to: Provider.GenAI,
+      });
+
+      // Verify the providerOptions are in the _provider_metadata
+      // biome-ignore lint/complexity/useLiteralKeys: required for index signature access
+      expect(storedMessages.messages[0]?._provider_metadata?.["providerOptions"]).toEqual({
+        openai: { user: "test-user-id" },
+        anthropic: { cacheControl: { type: "ephemeral" } },
+      });
+
+      // Step 2: Later, translate from GenAI to VercelAI with passthrough
+      const passthroughTranslator = new Translator({ providerMetadata: "passthrough" });
+      const vercelMessages = passthroughTranslator.translate(storedMessages.messages, {
+        from: Provider.GenAI,
+        to: Provider.VercelAI,
+      });
+
+      // The providerOptions should be a direct property on the VercelAI message
+      const vercelMessage = vercelMessages.messages[0] as Record<string, unknown>;
+      // biome-ignore lint/complexity/useLiteralKeys: required for index signature access
+      expect(vercelMessage["providerOptions"]).toEqual({
+        openai: { user: "test-user-id" },
+        anthropic: { cacheControl: { type: "ephemeral" } },
+      });
+    });
+
+    it("should strip existing _provider_metadata when mode is 'strip'", () => {
+      // Messages that already have _provider_metadata from a previous Rosetta translation
+      const messagesWithMetadata: GenAIMessage[] = [
+        {
+          role: "user",
+          parts: [{ type: "text", content: "Hello" }],
+          _provider_metadata: {
+            providerOptions: { anthropic: { cacheControl: { type: "ephemeral" } } },
+            customField: "someValue",
+            _known_fields: { toolName: "test" },
+          },
+        },
+      ];
+
+      // Translate with "strip" mode - should remove all metadata
+      const stripTranslator = new Translator({ providerMetadata: "strip" });
+      const result = stripTranslator.translate(messagesWithMetadata, {
+        from: Provider.GenAI,
+        to: Provider.VercelAI,
+      });
+
+      const message = result.messages[0] as Record<string, unknown>;
+
+      // The output should NOT have _provider_metadata or _providerMetadata
+      // biome-ignore lint/complexity/useLiteralKeys: required for index signature access
+      expect(message["_provider_metadata"]).toBeUndefined();
+      // biome-ignore lint/complexity/useLiteralKeys: required for index signature access
+      expect(message["_providerMetadata"]).toBeUndefined();
+
+      // The extra fields should NOT be spread on the entity either
+      // biome-ignore lint/complexity/useLiteralKeys: required for index signature access
+      expect(message["providerOptions"]).toBeUndefined();
+      // biome-ignore lint/complexity/useLiteralKeys: required for index signature access
+      expect(message["customField"]).toBeUndefined();
+    });
+
+    it("should not nest _provider_metadata when input already has it (preserve mode)", () => {
+      // Messages that already have _provider_metadata from a previous Rosetta translation
+      const messagesWithMetadata: GenAIMessage[] = [
+        {
+          role: "user",
+          parts: [{ type: "text", content: "Hello" }],
+          _provider_metadata: {
+            providerOptions: { anthropic: { cacheControl: { type: "ephemeral" } } },
+            customField: "someValue",
+          },
+        },
+      ];
+
+      // Translate with "preserve" mode - should keep metadata but NOT nest it
+      const preserveTranslator = new Translator({ providerMetadata: "preserve" });
+      const result = preserveTranslator.translate(messagesWithMetadata, {
+        from: Provider.GenAI,
+        to: Provider.VercelAI,
+      });
+
+      const message = result.messages[0] as Record<string, unknown>;
+
+      // Should have _providerMetadata (camelCase for VercelAI)
+      // biome-ignore lint/complexity/useLiteralKeys: required for index signature access
+      expect(message["_providerMetadata"]).toBeDefined();
+
+      // biome-ignore lint/complexity/useLiteralKeys: required for index signature access
+      const metadata = message["_providerMetadata"] as Record<string, unknown>;
+
+      // The metadata should contain the original fields directly, NOT nested
+      // biome-ignore lint/complexity/useLiteralKeys: required for index signature access
+      expect(metadata["providerOptions"]).toEqual({
+        anthropic: { cacheControl: { type: "ephemeral" } },
+      });
+      // biome-ignore lint/complexity/useLiteralKeys: required for index signature access
+      expect(metadata["customField"]).toBe("someValue");
+
+      // Should NOT have nested _provider_metadata inside
+      // biome-ignore lint/complexity/useLiteralKeys: required for index signature access
+      expect(metadata["_provider_metadata"]).toBeUndefined();
+      // biome-ignore lint/complexity/useLiteralKeys: required for index signature access
+      expect(metadata["_providerMetadata"]).toBeUndefined();
+    });
+  });
+
+  describe("providerMetadata casing (snake_case vs camelCase)", () => {
+    it("should read camelCase _providerMetadata from input (previously translated by VercelAI target)", () => {
+      // Messages with camelCase metadata (as if outputted by a previous Rosetta translation to VercelAI)
+      const messagesWithCamelCase = [
+        {
+          role: "user" as const,
+          content: "Hello",
+          _providerMetadata: {
+            customField: "value",
+            _knownFields: { toolName: "test_tool" },
+          },
+        },
+      ];
+
+      // Translate to GenAI with preserve mode
+      const translator = new Translator({ providerMetadata: "preserve" });
+      const result = translator.translate(messagesWithCamelCase, {
+        from: Provider.VercelAI,
+        to: Provider.GenAI,
+      });
+
+      // GenAI uses snake_case, so output should have _provider_metadata
+      expect(result.messages[0]?._provider_metadata).toBeDefined();
+      // biome-ignore lint/complexity/useLiteralKeys: required for index signature access
+      expect(result.messages[0]?._provider_metadata?.["customField"]).toBe("value");
+      // Known fields should be preserved
+      expect(result.messages[0]?._provider_metadata?._known_fields?.toolName).toBe("test_tool");
+    });
+
+    it("should read snake_case _provider_metadata from input (previously translated by GenAI target)", () => {
+      // Messages with snake_case metadata (as if outputted by a previous Rosetta translation to GenAI)
+      const messagesWithSnakeCase: GenAIMessage[] = [
+        {
+          role: "user",
+          parts: [{ type: "text", content: "Hello" }],
+          _provider_metadata: {
+            customField: "value",
+            _known_fields: { toolName: "test_tool" },
+          },
+        },
+      ];
+
+      // Translate to VercelAI with preserve mode
+      const translator = new Translator({ providerMetadata: "preserve" });
+      const result = translator.translate(messagesWithSnakeCase, {
+        from: Provider.GenAI,
+        to: Provider.VercelAI,
+      });
+
+      const message = result.messages[0] as Record<string, unknown>;
+
+      // VercelAI uses camelCase, so output should have _providerMetadata
+      // biome-ignore lint/complexity/useLiteralKeys: required for index signature access
+      expect(message["_providerMetadata"]).toBeDefined();
+      // Should NOT have snake_case version
+      // biome-ignore lint/complexity/useLiteralKeys: required for index signature access
+      expect(message["_provider_metadata"]).toBeUndefined();
+
+      // biome-ignore lint/complexity/useLiteralKeys: required for index signature access
+      const metadata = message["_providerMetadata"] as Record<string, unknown>;
+      // biome-ignore lint/complexity/useLiteralKeys: required for index signature access
+      expect(metadata["customField"]).toBe("value");
+      // Known fields should use camelCase too
+      // biome-ignore lint/complexity/useLiteralKeys: required for index signature access
+      expect(metadata["_knownFields"]).toBeDefined();
+      // biome-ignore lint/complexity/useLiteralKeys: required for index signature access
+      expect((metadata["_knownFields"] as Record<string, unknown>)?.["toolName"]).toBe("test_tool");
+    });
+
+    it("should output snake_case for GenAI target", () => {
+      const promptlMessages = [
+        {
+          role: "user" as const,
+          content: [{ type: "text" as const, text: "Hello" }],
+          extraField: "extra",
+        },
+      ];
+
+      const translator = new Translator({ providerMetadata: "preserve" });
+      const result = translator.translate(promptlMessages, {
+        from: Provider.Promptl,
+        to: Provider.GenAI,
+      });
+
+      // GenAI should use snake_case
+      expect(result.messages[0]?._provider_metadata).toBeDefined();
+      // biome-ignore lint/complexity/useLiteralKeys: required for index signature access
+      expect(result.messages[0]?._provider_metadata?.["extraField"]).toBe("extra");
+    });
+
+    it("should output camelCase for VercelAI target", () => {
+      const genaiMessages: GenAIMessage[] = [
+        {
+          role: "user",
+          parts: [{ type: "text", content: "Hello" }],
+          _provider_metadata: {
+            extraField: "extra",
+          },
+        },
+      ];
+
+      const translator = new Translator({ providerMetadata: "preserve" });
+      const result = translator.translate(genaiMessages, {
+        from: Provider.GenAI,
+        to: Provider.VercelAI,
+      });
+
+      const message = result.messages[0] as Record<string, unknown>;
+
+      // VercelAI should use camelCase
+      // biome-ignore lint/complexity/useLiteralKeys: required for index signature access
+      expect(message["_providerMetadata"]).toBeDefined();
+      // biome-ignore lint/complexity/useLiteralKeys: required for index signature access
+      expect(message["_provider_metadata"]).toBeUndefined();
+    });
+
+    it("should read _knownFields (camelCase) from input and use for translation", () => {
+      // GenAI messages with camelCase _knownFields (as if previously translated with VercelAI as target)
+      // This simulates: source -> VercelAI (preserve) -> stored -> now translating to Promptl
+      const messagesWithCamelCaseKnown: GenAIMessage[] = [
+        {
+          role: "tool", // Must be "tool" role for Promptl to recognize tool_call_response
+          parts: [
+            {
+              type: "tool_call_response",
+              id: "call-123",
+              response: "Success",
+              // Metadata has camelCase _knownFields (as if from VercelAI output)
+              _provider_metadata: {
+                _knownFields: { toolName: "get_weather", isError: false },
+              },
+            },
+          ],
+        },
+      ];
+
+      // Translate to Promptl with passthrough - should use the known fields from _knownFields
+      const translator = new Translator({ providerMetadata: "passthrough" });
+      const result = translator.translate(messagesWithCamelCaseKnown, {
+        from: Provider.GenAI,
+        to: Provider.Promptl,
+      });
+
+      // The tool name should be extracted from _knownFields and placed on the message
+      const message = result.messages[0] as Record<string, unknown>;
+      // biome-ignore lint/complexity/useLiteralKeys: required for index signature access
+      expect(message["toolName"]).toBe("get_weather");
     });
   });
 });

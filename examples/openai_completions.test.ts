@@ -332,8 +332,10 @@ describe("OpenAI Completions E2E", () => {
       const textPart = result.messages[0]?.parts[0];
       expect(textPart?.type).toBe("text");
       expect((textPart as { content: string }).content).toBe("I cannot help with that request.");
-      // isRefusal is stored at root level for cross-provider access
-      expect(textPart?._provider_metadata?.isRefusal).toBe(true);
+      // isRefusal is stored in _known_fields for cross-provider access
+      expect((textPart?._provider_metadata?._known_fields as Record<string, unknown> | undefined)?.isRefusal).toBe(
+        true,
+      );
     });
 
     it("should auto-detect OpenAI Completions format", () => {

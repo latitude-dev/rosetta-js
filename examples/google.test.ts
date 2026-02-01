@@ -490,7 +490,8 @@ describe("Google Gemini E2E", () => {
         to: Provider.GenAI,
       });
 
-      expect(result.messages[0]?.parts[0]?._provider_metadata?.google).toMatchObject({
+      // Extra fields are now at root level of _provider_metadata
+      expect(result.messages[0]?.parts[0]?._provider_metadata).toMatchObject({
         displayName: "test.png",
       });
     });

@@ -82,7 +82,7 @@ describe("OpenAIResponsesSpecification", () => {
         direction: "output",
       });
 
-      expect(result.messages[0]?.parts[0]?._provider_metadata?.openai_responses).toEqual({ annotations });
+      expect(result.messages[0]?.parts[0]?._provider_metadata).toEqual({ annotations });
     });
 
     it("should handle all roles", () => {
@@ -112,7 +112,7 @@ describe("OpenAIResponsesSpecification", () => {
       const part = result.messages[0]?.parts[0];
       expect(part?.type).toBe("uri");
       expect((part as { uri: string }).uri).toBe("https://example.com/image.jpg");
-      expect(part?._provider_metadata?.openai_responses).toEqual({ detail: "high" });
+      expect(part?._provider_metadata).toEqual({ detail: "high" });
     });
 
     it("should convert input_image with base64 data URL to blob part", () => {
@@ -164,7 +164,7 @@ describe("OpenAIResponsesSpecification", () => {
       expect(part?.type).toBe("blob");
       expect((part as { modality: string }).modality).toBe("document");
       expect((part as { content: string }).content).toBe("SGVsbG8gV29ybGQ=");
-      expect(part?._provider_metadata?.openai_responses).toEqual({ filename: "hello.txt" });
+      expect(part?._provider_metadata).toEqual({ filename: "hello.txt" });
     });
 
     it("should convert input_file with file_id to file part", () => {
@@ -235,8 +235,9 @@ describe("OpenAIResponsesSpecification", () => {
       const part = result.messages[0]?.parts[0];
       expect(part?.type).toBe("text");
       expect((part as { content: string }).content).toBe("I cannot help with that.");
-      // isRefusal is stored at root level for cross-provider access
-      expect(part?._provider_metadata?.isRefusal).toBe(true);
+      // isRefusal is stored in _known_fields for cross-provider access
+      // biome-ignore lint/complexity/useLiteralKeys: required for index signature access
+      expect((part?._provider_metadata?._known_fields as Record<string, unknown>)?.["isRefusal"]).toBe(true);
     });
   });
 
@@ -299,7 +300,7 @@ describe("OpenAIResponsesSpecification", () => {
 
       const part = result.messages[0]?.parts[0];
       // id, status, and extra_field are all captured since only type, call_id, name, arguments are used for translation
-      expect(part?._provider_metadata?.openai_responses).toEqual({
+      expect(part?._provider_metadata).toEqual({
         id: "item_456",
         status: "completed",
         extra_field: "preserved",
@@ -387,7 +388,7 @@ describe("OpenAIResponsesSpecification", () => {
 
       const part = result.messages[0]?.parts[0];
       // Both id and encrypted_content are now captured as extra fields (not in schema)
-      expect(part?._provider_metadata?.openai_responses).toEqual({
+      expect(part?._provider_metadata).toEqual({
         id: "reasoning_123",
         encrypted_content: "encrypted_data_here",
       });
@@ -412,7 +413,7 @@ describe("OpenAIResponsesSpecification", () => {
       expect(result.messages).toHaveLength(1);
       expect(result.messages[0]?.role).toBe("assistant");
       expect(result.messages[0]?.parts[0]?.type).toBe("file_search_call");
-      expect(result.messages[0]?.parts[0]?._provider_metadata?.openai_responses).toEqual(item);
+      expect(result.messages[0]?.parts[0]?._provider_metadata).toEqual(item);
     });
 
     it("should convert web_search_call to generic part", () => {
@@ -428,7 +429,7 @@ describe("OpenAIResponsesSpecification", () => {
       });
 
       expect(result.messages[0]?.parts[0]?.type).toBe("web_search_call");
-      expect(result.messages[0]?.parts[0]?._provider_metadata?.openai_responses).toEqual(item);
+      expect(result.messages[0]?.parts[0]?._provider_metadata).toEqual(item);
     });
 
     it("should convert computer_call to generic part with assistant role", () => {

@@ -6,7 +6,42 @@
  */
 
 import { z } from "zod";
-import { ProviderMetadataSchema } from "$package/providers/metadata";
+
+/**
+ * Known fields stored in `_known_fields` for building correct translations.
+ * These are used internally by target providers regardless of the metadata mode.
+ */
+export const KnownFieldsSchema = z
+  .object({
+    /** Tool name for tool_call_response parts (GenAI schema doesn't include it) */
+    toolName: z.string().optional(),
+    /** Error indicator for tool results or other error states */
+    isError: z.boolean().optional(),
+    /** Refusal indicator for assistant refusal content */
+    isRefusal: z.boolean().optional(),
+    /** Original type when mapping to a different GenAI type (for lossy conversions) */
+    originalType: z.string().optional(),
+  })
+  .passthrough();
+
+/**
+ * Provider metadata schema for preserving provider-specific data.
+ * This is a flat structure with:
+ * - `_known_fields`: Internal fields used for building correct translations
+ * - All other fields: Extra data from the source provider, passed through
+ *
+ * The metadata is stored at `_provider_metadata` on GenAI entities.
+ * During `fromGenAI`, the target provider can read `_known_fields` for translation
+ * and apply the extra fields based on the `providerMetadata` mode.
+ */
+export const ProviderMetadataSchema = z
+  .object({
+    /** Known fields for cross-provider translation */
+    _known_fields: KnownFieldsSchema.optional(),
+    /** Also check camelCase version (from VercelAI/Promptl targets) */
+    _knownFields: KnownFieldsSchema.optional(),
+  })
+  .passthrough();
 
 /** Role of the entity that created the message. */
 export const GenAIRoleSchema = z.enum(["system", "user", "assistant", "tool"]);

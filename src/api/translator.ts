@@ -15,7 +15,7 @@ import {
   type ProviderSystem,
   type ProviderTarget,
 } from "$package/providers";
-import type { Voided } from "$package/utils";
+import type { ProviderMetadataMode, Voided } from "$package/utils";
 
 /** Configuration options for creating a Translator instance. */
 export type TranslatorConfig = {
@@ -30,15 +30,29 @@ export type TranslatorConfig = {
    * Whether to filter out empty messages during translation.
    *
    * When true, messages that have no meaningful content are removed from the output:
-   * - Messages with empty parts array
-   * - Messages where all parts are empty text parts (empty or whitespace-only)
-   *   AND there are no tool_call or tool_call_response parts
+   * - It has no parts, OR
+   * - All parts are empty text parts (empty or whitespace-only)
    *
+   * Messages with any non-text parts (tool_call, reasoning, blob, etc.) are always kept.
    * This is useful for cleaning up conversation history before sending to an LLM.
    *
    * @default false
    */
   filterEmptyMessages?: boolean;
+
+  /**
+   * How to handle provider metadata during translation.
+   *
+   * - "strip": No extra fields or metadata field in output. Known fields are still used internally.
+   * - "preserve" (default): Add metadata field to output entities. Fields stay inside the metadata field.
+   * - "passthrough": Spread all extra fields as direct properties on output entities.
+   *
+   * Note: When translating from and to the same provider, this is automatically
+   * set to "passthrough" to ensure lossless round-trips.
+   *
+   * @default "preserve"
+   */
+  providerMetadata?: ProviderMetadataMode;
 };
 
 /** Options for the translate/safeTranslate methods. */
@@ -128,6 +142,7 @@ function filterEmptyGenAIMessages(messages: GenAIMessage[]): GenAIMessage[] {
 export class Translator {
   private readonly inferPriority: Provider[];
   private readonly filterEmptyMessages: boolean;
+  private readonly providerMetadata: ProviderMetadataMode;
 
   constructor(config: TranslatorConfig = {}) {
     if (config.inferPriority !== undefined && config.inferPriority.length === 0) {
@@ -135,6 +150,7 @@ export class Translator {
     }
     this.inferPriority = config.inferPriority ?? DEFAULT_INFER_PRIORITY;
     this.filterEmptyMessages = config.filterEmptyMessages ?? false;
+    this.providerMetadata = config.providerMetadata ?? "preserve";
   }
 
   /**
@@ -153,6 +169,8 @@ export class Translator {
     const to = options.to ?? (Provider.GenAI as To);
     const system = options.system;
     const direction = options.direction ?? "input";
+    // Auto-passthrough for same-provider translations to ensure lossless round-trips
+    const providerMetadata = (from as string) === (to as string) ? "passthrough" : this.providerMetadata;
 
     // Get source provider specification
     const sourceSpec = getProviderSpecification(from);
@@ -177,7 +195,7 @@ export class Translator {
     }
 
     // Convert from GenAI to target format
-    const converted = targetSpec.fromGenAI({ messages: filteredMessages, direction });
+    const converted = targetSpec.fromGenAI({ messages: filteredMessages, direction, providerMetadata });
 
     return { messages: converted.messages, system: converted.system };
   }

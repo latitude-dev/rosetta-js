@@ -136,6 +136,7 @@ const safeResult = translator.safeTranslate(inputMessages);
 |--------|------|---------|-------------|
 | `inferPriority` | `Provider[]` | `DEFAULT_INFER_PRIORITY` | Priority order for provider auto-detection |
 | `filterEmptyMessages` | `boolean` | `false` | Remove empty messages (no parts, or only empty text) during translation |
+| `providerMetadata` | `"preserve" \| "passthrough" \| "strip"` | `"preserve"` | How to handle provider metadata (extra fields) in translation |
 
 ### Input Flexibility
 
@@ -349,10 +350,10 @@ const system: GenAISystem = [
 
 ### Provider Metadata
 
-All GenAI entities support `_provider_metadata` to preserve data during translation. The metadata has two types of fields:
+All GenAI entities support `_provider_metadata` to preserve extra fields during translation. The metadata has two types of fields:
 
-1. **Root-level shared fields** (camelCase): Cross-provider semantic data accessible to any target provider
-2. **Provider-specific slots** (snake_case): Data for same-provider round-trips only
+1. **`_known_fields`**: Cross-provider semantic data (`toolName`, `isError`, `isRefusal`, `originalType`) used to build accurate translations
+2. **Extra fields**: Provider-specific data preserved for round-trips
 
 ```typescript
 const message: GenAIMessage = {
@@ -362,22 +363,43 @@ const message: GenAIMessage = {
     id: "call_123",
     response: "Error occurred",
     _provider_metadata: {
-      // Root-level shared fields - any target provider can read these
-      toolName: "get_weather",  // Tool name (GenAI schema doesn't include it)
-      isError: true,            // Error indicator
-      
-      // Provider-specific slot - only for same-provider round-trips
-      openai_completions: { annotations: [...] },
+      // Known fields - used by target providers to build accurate translations
+      _known_fields: {
+        toolName: "get_weather",  // Tool name (GenAI schema doesn't include it)
+        isError: true,            // Error indicator
+      },
+      // Extra fields - any other provider-specific data
+      annotations: [...],
     },
   }],
 };
 ```
 
-**Shared fields**: `toolName`, `isError`, `isRefusal`, `originalType`
+#### Provider Metadata Mode
 
-**Provider slots**: `openai_completions`, `openai_responses`, `anthropic`, `google`, `vercel_ai`, `promptl`, `compat`
+The `providerMetadata` option controls how metadata (extra fields) is handled in the output.
 
-This design enables lossless cross-provider translation while keeping providers isolated from each other.
+| Mode | Description |
+|------|-------------|
+| `"preserve"` (default) | Keep `_provider_metadata` nested in output entities |
+| `"passthrough"` | Spread extra fields as direct properties on output entities |
+| `"strip"` | Don't include metadata (only use `_known_fields` for translation) |
+
+```typescript
+// Preserve metadata (default) - keeps _provider_metadata in output
+const translator = new Translator(); // or { providerMetadata: "preserve" }
+translator.translate(messages, { from: Provider.Promptl, to: Provider.GenAI });
+
+// Passthrough - spread extra fields on output entities for lossless round-trips
+const passthroughTranslator = new Translator({ providerMetadata: "passthrough" });
+passthroughTranslator.translate(messages, { from: Provider.GenAI, to: Provider.Promptl });
+
+// Strip - clean output without metadata
+const stripTranslator = new Translator({ providerMetadata: "strip" });
+stripTranslator.translate(messages, { to: Provider.VercelAI });
+```
+
+**Note**: When translating between the same provider (e.g., GenAI → GenAI), `providerMetadata` is automatically set to `"passthrough"` to ensure lossless round-trips, regardless of the configured setting.
 
 ## TypeScript Support
 

@@ -36,6 +36,7 @@ import {
   normalizeKeys,
   type Obj,
   parseJsonIfString,
+  storeMetadata,
 } from "$package/utils";
 
 export const CompatSpecification = {
@@ -144,13 +145,14 @@ function convertMessage(message: CompatMessage, direction: "input" | "output"): 
     parts.push({ type: "reasoning", content: reasoning });
   }
 
-  // Check for refusal (OpenAI) - store at root level for cross-provider access
+  // Check for refusal (OpenAI) - store in known fields
   const refusal = getString(normalized, "refusal");
   if (refusal) {
+    const metadata = storeMetadata(undefined, {}, { isRefusal: true });
     parts.push({
       type: "text",
       content: refusal,
-      _provider_metadata: { isRefusal: true },
+      ...(metadata ? { _provider_metadata: metadata } : {}),
     });
   }
 
@@ -214,6 +216,9 @@ function convertMessage(message: CompatMessage, direction: "input" | "output"): 
           ? (parts[0] as { content: string }).content
           : parts.map((p) => (p.type === "text" ? (p as { content: string }).content : p));
 
+      // Store toolName in known fields
+      const metadata = toolName ? storeMetadata(undefined, {}, { toolName: String(toolName) }) : undefined;
+
       return {
         role: "tool",
         parts: [
@@ -221,8 +226,7 @@ function convertMessage(message: CompatMessage, direction: "input" | "output"): 
             type: "tool_call_response",
             id: typeof toolCallId === "string" ? toolCallId : null,
             response,
-            // Store toolName at root level for cross-provider access
-            ...(toolName ? { _provider_metadata: { toolName: String(toolName) } } : {}),
+            ...(metadata ? { _provider_metadata: metadata } : {}),
           },
         ],
         ...(name ? { name } : {}),
@@ -452,14 +456,15 @@ function convertTypedPart(part: Obj, type: string): GenAIPart[] {
     case "redactedthinking":
     case "redacted-reasoning": {
       // Anthropic: { type: "redacted_thinking", data: "..." }
-      // Map to reasoning (closest GenAI equivalent) with originalType at root level for cross-provider access
+      // Map to reasoning with originalType in known fields
       const data = getString(part, "data") ?? getString(part, "content");
       if (data) {
+        const metadata = storeMetadata(undefined, {}, { originalType: type });
         return [
           {
             type: "reasoning",
             content: data,
-            _provider_metadata: { originalType: type },
+            ...(metadata ? { _provider_metadata: metadata } : {}),
           },
         ];
       }
@@ -468,14 +473,15 @@ function convertTypedPart(part: Obj, type: string): GenAIPart[] {
 
     case "refusal": {
       // OpenAI: { type: "refusal", refusal: "..." }
-      // Store isRefusal at root level for cross-provider access
+      // Store isRefusal in known fields
       const content = getString(part, "refusal") ?? getString(part, "content");
       if (content) {
+        const metadata = storeMetadata(undefined, {}, { isRefusal: true });
         return [
           {
             type: "text",
             content,
-            _provider_metadata: { isRefusal: true },
+            ...(metadata ? { _provider_metadata: metadata } : {}),
           },
         ];
       }
@@ -552,13 +558,14 @@ function convertUntypedPart(part: Obj): GenAIPart[] {
     const id = getString(functionResponse, "id");
     const name = getString(functionResponse, "name");
     const response = get(functionResponse, "response");
-    // Store toolName at root level for cross-provider access
+    // Store toolName in known fields
+    const metadata = name ? storeMetadata(undefined, {}, { toolName: name }) : undefined;
     return [
       {
         type: "tool_call_response",
         id: id ?? null,
         response,
-        ...(name ? { _provider_metadata: { toolName: name } } : {}),
+        ...(metadata ? { _provider_metadata: metadata } : {}),
       },
     ];
   }

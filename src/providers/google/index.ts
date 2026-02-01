@@ -22,7 +22,7 @@ import {
   GoogleSystemSchema,
 } from "$package/providers/google/schema";
 import { Provider, type ProviderSpecification, type ProviderToGenAIArgs } from "$package/providers/provider";
-import { extractExtraFields, inferModality, withMetadata } from "$package/utils";
+import { extractExtraFields, inferModality, readMetadata, storeMetadata, withMetadata } from "$package/utils";
 
 export const GoogleSpecification = {
   provider: Provider.Google,
@@ -59,7 +59,7 @@ export const GoogleSpecification = {
 } as const satisfies ProviderSpecification<Provider.Google>;
 
 /** Message-level keys that are handled explicitly during conversion. */
-const KNOWN_CONTENT_KEYS = ["role", "parts"];
+const KNOWN_CONTENT_KEYS = ["role", "parts", "_provider_metadata", "_providerMetadata"];
 
 /** Converts Google system instructions to a GenAI system message. */
 function convertSystemToGenAI(system: unknown): GenAIMessage {
@@ -100,6 +100,7 @@ function convertSystemToGenAI(system: unknown): GenAIMessage {
 /** Converts a Google Content to a GenAI message. */
 function googleContentToGenAI(content: GoogleContent, direction: "input" | "output"): GenAIMessage {
   const extraFields = extractExtraFields(content, KNOWN_CONTENT_KEYS as (keyof GoogleContent)[]);
+  const existingMetadata = readMetadata(content as unknown as Record<string, unknown>);
   const parts: GenAIPart[] = [];
 
   // Convert each part
@@ -110,10 +111,12 @@ function googleContentToGenAI(content: GoogleContent, direction: "input" | "outp
   // Map role: 'model' -> 'assistant', otherwise keep as-is
   const role = mapRole(content.role, direction);
 
+  const msgMetadata = storeMetadata(existingMetadata, extraFields, {});
+
   return {
     role,
     parts,
-    ...(Object.keys(extraFields).length > 0 ? { _provider_metadata: { google: extraFields } } : {}),
+    ...(msgMetadata ? { _provider_metadata: msgMetadata } : {}),
   };
 }
 
@@ -139,25 +142,32 @@ const KNOWN_PART_KEYS = [
   "thoughtSignature",
   "mediaResolution",
   "videoMetadata",
+  "_provider_metadata",
+  "_providerMetadata",
 ];
 
 /** Converts a Google Part to GenAI parts. */
 function convertPart(part: GooglePart): GenAIPart[] {
   const extraFields = extractExtraFields(part, KNOWN_PART_KEYS as (keyof GooglePart)[]);
+  const existingMetadata = readMetadata(part as unknown as Record<string, unknown>);
 
   // Text content
   if (part.text !== undefined) {
     // Check if this is a thought (reasoning)
     if (part.thought === true) {
-      const metadata: Record<string, unknown> = { ...extraFields };
       // biome-ignore lint/complexity/useLiteralKeys: TypeScript requires bracket notation for index signature access
-      if (part["thoughtSignature"]) {
-        // biome-ignore lint/complexity/useLiteralKeys: TypeScript requires bracket notation for index signature access
-        metadata["thoughtSignature"] = part["thoughtSignature"];
-      }
-      return [withMetadata({ type: "reasoning", content: part.text }, "google", metadata)];
+      const thoughtSignature = part["thoughtSignature"];
+      const allExtra = thoughtSignature ? { thoughtSignature, ...extraFields } : extraFields;
+      const metadata = storeMetadata(existingMetadata, allExtra, {});
+      return [
+        {
+          type: "reasoning",
+          content: part.text,
+          ...(metadata ? { _provider_metadata: metadata } : {}),
+        },
+      ];
     }
-    return [withMetadata({ type: "text", content: part.text }, "google", extraFields)];
+    return [withMetadata({ type: "text", content: part.text }, extraFields)];
   }
 
   // Inline blob data (images, audio, etc.)
@@ -165,17 +175,15 @@ function convertPart(part: GooglePart): GenAIPart[] {
     const blob = part.inlineData;
     const modality = inferModality(blob.mimeType);
     const blobExtra = extractExtraFields(blob, ["data", "mimeType"] as (keyof typeof blob)[]);
+    const metadata = storeMetadata(existingMetadata, { ...extraFields, ...blobExtra }, {});
     return [
-      withMetadata(
-        {
-          type: "blob",
-          modality,
-          mime_type: blob.mimeType ?? null,
-          content: blob.data ?? "",
-        },
-        "google",
-        { ...extraFields, ...blobExtra },
-      ),
+      {
+        type: "blob",
+        modality,
+        mime_type: blob.mimeType ?? null,
+        content: blob.data ?? "",
+        ...(metadata ? { _provider_metadata: metadata } : {}),
+      },
     ];
   }
 
@@ -184,17 +192,15 @@ function convertPart(part: GooglePart): GenAIPart[] {
     const file = part.fileData;
     const modality = inferModality(file.mimeType);
     const fileExtra = extractExtraFields(file, ["fileUri", "mimeType"] as (keyof typeof file)[]);
+    const metadata = storeMetadata(existingMetadata, { ...extraFields, ...fileExtra }, {});
     return [
-      withMetadata(
-        {
-          type: "uri",
-          modality,
-          mime_type: file.mimeType ?? null,
-          uri: file.fileUri ?? "",
-        },
-        "google",
-        { ...extraFields, ...fileExtra },
-      ),
+      {
+        type: "uri",
+        modality,
+        mime_type: file.mimeType ?? null,
+        uri: file.fileUri ?? "",
+        ...(metadata ? { _provider_metadata: metadata } : {}),
+      },
     ];
   }
 
@@ -202,17 +208,15 @@ function convertPart(part: GooglePart): GenAIPart[] {
   if (part.functionCall !== undefined) {
     const fc = part.functionCall;
     const fcExtra = extractExtraFields(fc, ["id", "name", "args"] as (keyof typeof fc)[]);
+    const metadata = storeMetadata(existingMetadata, { ...extraFields, ...fcExtra }, {});
     return [
-      withMetadata(
-        {
-          type: "tool_call",
-          id: fc.id ?? null,
-          name: fc.name ?? "",
-          arguments: fc.args,
-        },
-        "google",
-        { ...extraFields, ...fcExtra },
-      ),
+      {
+        type: "tool_call",
+        id: fc.id ?? null,
+        name: fc.name ?? "",
+        arguments: fc.args,
+        ...(metadata ? { _provider_metadata: metadata } : {}),
+      },
     ];
   }
 
@@ -220,19 +224,19 @@ function convertPart(part: GooglePart): GenAIPart[] {
   if (part.functionResponse !== undefined) {
     const fr = part.functionResponse;
     const frExtra = extractExtraFields(fr, ["id", "name", "response"] as (keyof typeof fr)[]);
-    const combinedMeta = { ...extraFields, ...frExtra };
-    // Store toolName at root level for cross-provider access
+    // Store toolName in known fields
+    const metadata = storeMetadata(
+      existingMetadata,
+      { ...extraFields, ...frExtra },
+      fr.name ? { toolName: fr.name } : {},
+    );
     return [
-      withMetadata(
-        {
-          type: "tool_call_response",
-          id: fr.id ?? null,
-          response: fr.response,
-        },
-        "google",
-        combinedMeta,
-        fr.name ? { toolName: fr.name } : undefined,
-      ),
+      {
+        type: "tool_call_response",
+        id: fr.id ?? null,
+        response: fr.response,
+        ...(metadata ? { _provider_metadata: metadata } : {}),
+      },
     ];
   }
 
@@ -240,16 +244,14 @@ function convertPart(part: GooglePart): GenAIPart[] {
   if (part.executableCode !== undefined) {
     const code = part.executableCode;
     const codeExtra = extractExtraFields(code, ["code", "language"] as (keyof typeof code)[]);
+    const metadata = storeMetadata(existingMetadata, { ...extraFields, ...codeExtra }, {});
     return [
-      withMetadata(
-        {
-          type: "executable_code",
-          code: code.code ?? "",
-          language: code.language,
-        },
-        "google",
-        { ...extraFields, ...codeExtra },
-      ),
+      {
+        type: "executable_code",
+        code: code.code ?? "",
+        language: code.language,
+        ...(metadata ? { _provider_metadata: metadata } : {}),
+      } as GenAIPart,
     ];
   }
 
@@ -257,19 +259,22 @@ function convertPart(part: GooglePart): GenAIPart[] {
   if (part.codeExecutionResult !== undefined) {
     const result = part.codeExecutionResult;
     const resultExtra = extractExtraFields(result, ["outcome", "output"] as (keyof typeof result)[]);
+    const metadata = storeMetadata(existingMetadata, { ...extraFields, ...resultExtra }, {});
     return [
-      withMetadata(
-        {
-          type: "code_execution_result",
-          outcome: result.outcome,
-          output: result.output ?? "",
-        },
-        "google",
-        { ...extraFields, ...resultExtra },
-      ),
+      {
+        type: "code_execution_result",
+        outcome: result.outcome,
+        output: result.output ?? "",
+        ...(metadata ? { _provider_metadata: metadata } : {}),
+      } as GenAIPart,
     ];
   }
 
   // Unknown part type - convert to generic part preserving all data
-  return [{ type: "unknown", ...part, _provider_metadata: { google: extraFields } }];
+  const { _provider_metadata, _providerMetadata, ...restPart } = part as GooglePart & {
+    _provider_metadata?: unknown;
+    _providerMetadata?: unknown;
+  };
+  const metadata = storeMetadata(existingMetadata, extraFields, {});
+  return [{ type: "unknown", ...restPart, ...(metadata ? { _provider_metadata: metadata } : {}) } as GenAIPart];
 }

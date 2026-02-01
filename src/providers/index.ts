@@ -8,7 +8,6 @@ export {
   Provider,
   type ProviderFromGenAIArgs,
   type ProviderMessage,
-  type ProviderMetadata,
   type ProviderSpecification,
   type ProviderSystem,
   type ProviderToGenAIArgs,

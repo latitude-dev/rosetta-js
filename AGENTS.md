@@ -106,9 +106,8 @@ src/
 │   └── input/
 │       └── index.ts            # Input types (InputMessages, InputSystem)
 ├── providers/
-│   ├── index.ts                # Re-exports from provider.ts, metadata.ts, specifications.ts
+│   ├── index.ts                # Re-exports from provider.ts and specifications.ts
 │   ├── provider.ts             # Provider enum and types (separate to avoid circular deps)
-│   ├── metadata.ts             # ProviderMetadataSchema (separate to avoid circular deps)
 │   ├── specifications.ts       # PROVIDER_SPECIFICATIONS registry
 │   ├── genai/                  # GenAI provider specification
 │   ├── promptl/                # Promptl provider specification
@@ -258,7 +257,7 @@ All GenAI schemas and types are prefixed with "GenAI" (e.g., `GenAIMessageSchema
 4. **Tests are the exception**: Test files (`.test.ts`, `.spec.ts`) should always be separate from the implementation.
 
 5. **Extra files when necessary**: Although we prefer consolidated files, an extra file can be created when:
-   - It's needed to fix circular dependencies (e.g., `metadata.ts` for shared schemas)
+   - It's needed to fix circular dependencies (e.g., `provider.ts` for shared types)
    - The concerns are genuinely separate (e.g., `translator.ts` for a distinct class)
    - The file would otherwise exceed ~500 lines
    - The provider has complex schemas that benefit from separation (e.g., `schema.ts` for message schemas)
@@ -275,7 +274,6 @@ providers/genai/
 providers/promptl/
 ├── index.ts              # Provider specification and conversion logic
 ├── index.test.ts         # Tests
-├── metadata.ts           # Provider-specific metadata types
 └── schema.ts             # Message and content schemas
 ```
 
@@ -420,12 +418,11 @@ export const OpenAIResponsesTextPartSchema = z
 // - image_generation_call, local_shell_call, etc.
 ```
 
-#### Step 1: Create Provider Schemas and Metadata
+#### Step 1: Create Provider Schemas
 
 Create `src/providers/{provider_name}/` folder with:
 
 - `schema.ts` - Message and content Zod schemas
-- `metadata.ts` - Provider-specific metadata schema
 
 **1.1. Create message schema** (`schema.ts`):
 
@@ -447,40 +444,6 @@ export type NewProviderMessage = Infer<typeof NewProviderMessageSchema>;
 
 // For internal formats (GenAI, Promptl), use z.infer<T> instead:
 // export type NewProviderMessage = z.infer<typeof NewProviderMessageSchema>;
-```
-
-**1.2. Create metadata schema** (`metadata.ts`):
-
-```typescript
-import { z } from "zod";
-
-// For source-only providers, use opaque passthrough - no explicit fields needed
-export const NewProviderMetadataSchema = z.object({}).passthrough();
-export type NewProviderMetadata = z.infer<typeof NewProviderMetadataSchema>;
-
-// For target providers (with fromGenAI), you MAY define explicit fields if needed:
-// export const NewProviderMetadataSchema = z.object({
-//   fieldNeededInFromGenAI: z.string().optional(),
-// }).passthrough();
-```
-
-**Metadata Schema Guidelines:**
-
-- **Prefer opaque passthrough**: Use `z.object({}).passthrough()` unless you have a specific reason to define fields explicitly
-- **Only define fields you need to ACCESS programmatically** in your conversion logic (typically in `fromGenAI`)
-- **Source-only providers don't need explicit fields**: Since they only convert TO GenAI, metadata is just preserved for potential downstream use
-- **Treat metadata as opaque data**: Store any extra/unknown fields as-is and retrieve them as-is - don't over-engineer the schema
-
-**1.3. Register metadata** (`src/providers/metadata.ts`):
-
-```typescript
-import { NewProviderMetadataSchema } from "$package/providers/new_provider/metadata";
-
-export const ProviderMetadataSchema = z.object({
-  genai: z.never().optional(),
-  promptl: PromptlMetadataSchema.optional(),
-  new_provider: NewProviderMetadataSchema.optional(), // Must match enum value
-});
 ```
 
 #### Step 2: Register the Provider
@@ -512,12 +475,6 @@ export type ProviderMessage<P extends Provider> =
 export type ProviderSystem<P extends Provider> =
   P extends Provider.GenAI ? GenAISystem :
   P extends Provider.NewProvider ? never : // or NewProviderSystem if separated
-  never;
-
-// ProviderMetadata<P> - Maps provider to its metadata type
-// Use `never` for GenAI (it's the intermediate, doesn't store its own metadata)
-export type ProviderMetadata<P extends Provider> =
-  P extends Provider.NewProvider ? NewProviderMetadata :
   never;
 ```
 
@@ -609,55 +566,63 @@ toGenAI({ messages, direction }) {
 
 GenAI allows passthrough for roles, has a generic part type, and supports `_provider_metadata` on every entity. Use these to minimize information loss.
 
-**6.1. The Known Fields Pattern:**
+**6.1. The Metadata Structure:**
 
-Use `extractExtraFields` with a list of "known" keys to automatically capture everything else as metadata:
+The `_provider_metadata` field has two parts:
+- **`_known_fields`**: Cross-provider semantic data (`toolName`, `isError`, `isRefusal`, `originalType`)
+- **Extra fields**: Provider-specific data at the root level
+
+Use the utility functions from `$package/utils`:
 
 ```typescript
-// Only list fields you EXPLICITLY handle in your conversion code
-const KNOWN_MESSAGE_KEYS = ["role", "content", "name", "tool_calls"];
+import { storeMetadata, readMetadata, getKnownFields, applyMetadataMode } from "$package/utils";
 
+// In toGenAI - store metadata with known fields and extra fields
 function convertToGenAI(message: NewProviderMessage): GenAIMessage {
-  // Everything NOT in KNOWN_MESSAGE_KEYS automatically goes to extraFields
   const extraFields = extractExtraFields(message, KNOWN_MESSAGE_KEYS);
+  const existingMetadata = readMetadata(message); // Read existing metadata if any
+  
+  // Store known fields and extra fields
+  const metadata = storeMetadata(
+    existingMetadata,
+    extraFields,
+    { toolName: message.name } // Known fields for cross-provider access
+  );
 
   return {
     role: message.role,
     parts: [{ type: "text", content: message.content }],
-    ...(message.name ? { name: message.name } : {}),
-    // Store all unknown fields as opaque metadata
-    ...(Object.keys(extraFields).length > 0
-      ? { _provider_metadata: { new_provider: extraFields } }
-      : {}),
+    ...(metadata ? { _provider_metadata: metadata } : {}),
   };
 }
 ```
 
-**Key principle**: If you're NOT explicitly using a field in your conversion logic, DON'T put it in `knownKeys`. Let it flow automatically to metadata via `extractExtraFields`.
-
-**Anti-pattern to avoid:**
-```typescript
-// BAD: Adding to known keys then manually re-adding
-const knownKeys = ["role", "content", "annotations"]; // annotations in known list
-const extraFields = extractExtraFields(message, knownKeys);
-if (message.annotations) extraFields.annotations = message.annotations; // Why exclude then re-add?
-
-// GOOD: Just don't include it in known keys
-const knownKeys = ["role", "content"]; // annotations NOT in list
-const extraFields = extractExtraFields(message, knownKeys); // annotations automatically included
-```
-
 **6.2. Restore fields when converting back (target providers only):**
 
-```typescript
-function convertFromGenAI(message: GenAIMessage): NewProviderMessage {
-  const metadata = message._provider_metadata?.new_provider ?? {};
+Use `applyMetadataMode` to handle the three modes (`"preserve"`, `"passthrough"`, `"strip"`):
 
-  return {
+```typescript
+import { applyMetadataMode, readMetadata, getKnownFields } from "$package/utils";
+import type { ProviderMetadataMode } from "$package/utils";
+
+function convertFromGenAI(
+  message: GenAIMessage,
+  providerMetadata: ProviderMetadataMode
+): NewProviderMessage {
+  const metadata = readMetadata(message);
+  const knownFields = getKnownFields(metadata);
+  
+  // Build base entity using known fields for accurate translation
+  const base: NewProviderMessage = {
     role: mapRole(message.role),
     content: extractContent(message.parts),
-    ...metadata, // Restore all preserved fields
+    // Use known fields for cross-provider translation
+    ...(knownFields.toolName ? { name: knownFields.toolName } : {}),
   };
+
+  // Apply metadata mode (preserve/passthrough/strip)
+  // useCamelCase = true for providers like VercelAI that use camelCase
+  return applyMetadataMode(base, metadata, providerMetadata, false);
 }
 ```
 
@@ -1037,20 +1002,18 @@ When implementing provider conversions, keep these cross-provider concerns in mi
 
 Tool names are essential for matching tool calls with tool results. When converting `tool_call_response` parts:
 
-- **In `toGenAI`**: Store `toolName` at the root level of `_provider_metadata` (not in your provider slot)
-- **In `fromGenAI`**: Read `toolName` from root level only
-- **Fallback to inference**: If not in metadata, try to infer from matching `tool_call` parts in the conversation by `id`
+- **In `toGenAI`**: Store `toolName` in `_known_fields` using `storeMetadata`
+- **In `fromGenAI`**: Read `toolName` via `getKnownFields`
+- **Fallback to inference**: If not in known fields, try to infer from matching `tool_call` parts in the conversation by `id`
 - **Last resort**: Use `"unknown"` as a fallback
 
 ```typescript
 // In toGenAI for tool_call_response:
-_provider_metadata: {
-  toolName: content.toolName,  // Root level for cross-provider access
-  yourProvider: { ... },       // Your slot for round-trip data
-}
+const metadata = storeMetadata(existingMeta, extraFields, { toolName: content.toolName });
 
 // In fromGenAI for tool_call_response:
-let toolName = partMeta?.toolName as string | undefined;  // Read from root
+const knownFields = getKnownFields(readMetadata(part));
+let toolName = knownFields.toolName;
 if (!toolName && toolId && toolCallNameMap.has(toolId)) {
   toolName = toolCallNameMap.get(toolId);
 }
@@ -1085,19 +1048,18 @@ if (message.toolCalls) {
 
 Some providers (like VercelAI) use typed tool result outputs with `{ type, value }` structure:
 
-- **In `toGenAI`**: Extract the actual value and store `isError` at root level, store `outputType` in your slot
-- **In `fromGenAI`**: Read `isError` from root level, `outputType` from your slot, wrap responses appropriately
+- **In `toGenAI`**: Extract the actual value and store `isError` in `_known_fields`, store `outputType` as extra field
+- **In `fromGenAI`**: Read `isError` via `getKnownFields`, `outputType` from metadata
 
 ```typescript
 // In toGenAI for tool_call_response:
-_provider_metadata: {
-  isError: true,                         // Root level for cross-provider access
-  vercel_ai: { outputType: "error-text" },  // Your slot for round-trip
-}
+const metadata = storeMetadata(existingMeta, { outputType: "error-text" }, { isError: true });
 
 // In fromGenAI for tool_call_response:
-const isError = partMeta?.isError as boolean | undefined;  // Read from root
-const outputType = partMeta?.vercel_ai?.outputType;         // Read from own slot
+const knownFields = getKnownFields(readMetadata(part));
+const metadata = readMetadata(part);
+const isError = knownFields.isError;
+const outputType = metadata.outputType as string | undefined;
 if (typeof response === "string") {
   output = { type: isError ? "error-text" : "text", value: response };
 } else {
@@ -1110,27 +1072,25 @@ if (typeof response === "string") {
 When a source provider has part types that don't exist exactly in GenAI (e.g., `redacted-reasoning`):
 
 - **Always map to the closest GenAI part type** - Don't use generic parts if a close equivalent exists
-- Store `originalType` at the root level of `_provider_metadata` for cross-provider access
+- Store `originalType` in `_known_fields` using `storeMetadata`
 - Only use generic parts when there truly is NO equivalent in GenAI
 
 ```typescript
 // In toGenAI - map redacted-reasoning to reasoning (closest equivalent)
 case "redacted-reasoning":
+  const metadata = storeMetadata(existingMeta, extraFields, { originalType: "redacted-reasoning" });
   return [{
     type: "reasoning",  // Use existing GenAI type
     content: content.data,
-    _provider_metadata: {
-      originalType: "redacted-reasoning",  // Root level for cross-provider access
-      promptl: { ...metadata },            // Your slot for round-trip
-    },
+    ...(metadata ? { _provider_metadata: metadata } : {}),
   }];
 ```
 
 ```typescript
 // In fromGenAI - restore original type if coming back to same provider
 if (part.type === "reasoning") {
-  const originalType = part._provider_metadata?.originalType;  // Read from root
-  if (originalType === "redacted-reasoning") {
+  const knownFields = getKnownFields(readMetadata(part));
+  if (knownFields.originalType === "redacted-reasoning") {
     return { type: "redacted-reasoning", data: part.content };
   }
   return { type: "reasoning", text: part.content };
@@ -1235,10 +1195,35 @@ export type ProviderMessage<P extends Provider> =
 
 5. **Avoid redundant metadata**: If information is already captured in the GenAI structure, don't duplicate it in metadata. For example, a function tool call's name and arguments are in the `tool_call` part - no need to also store them in metadata.
 
-6. **Use the known fields pattern correctly**: When using `extractExtraFields(obj, knownKeys)`:
-   - Only include keys in `knownKeys` that you explicitly handle in your conversion code
-   - Everything else automatically flows to metadata - don't manually re-add fields you excluded
-   - If you find yourself adding a field to `knownKeys` then manually copying it to metadata, remove it from `knownKeys` instead
+6. **Use `extractExtraFields` and `storeMetadata` correctly**:
+
+   **Key principle**: If you're NOT explicitly using a field in your conversion logic, DON'T put it in `knownKeys`. Let it flow automatically to metadata via `extractExtraFields`.
+
+   **Anti-pattern to avoid - excluding then re-adding:**
+   ```typescript
+   // BAD: Adding to knownKeys then manually re-adding to extraFields
+   const knownKeys = ["role", "content", "annotations"]; // annotations in known list
+   const extraFields = extractExtraFields(message, knownKeys);
+   if (message.annotations) extraFields.annotations = message.annotations; // Why exclude then re-add?
+
+   // GOOD: Just don't include it in knownKeys
+   const knownKeys = ["role", "content"]; // annotations NOT in list
+   const extraFields = extractExtraFields(message, knownKeys); // annotations automatically included
+   ```
+
+   **Anti-pattern to avoid - confusing extra fields with known fields:**
+   ```typescript
+   // BAD: Putting semantic data as extra fields instead of known fields
+   const metadata = storeMetadata(existing, { toolName: part.name }, {}); // toolName as extra field
+
+   // GOOD: Use _known_fields for cross-provider semantic data
+   const metadata = storeMetadata(existing, extraFields, { toolName: part.name }); // toolName in known fields
+   ```
+
+   **Remember:**
+   - `knownKeys` = fields you explicitly handle in your conversion code
+   - `extraFields` = provider-specific data for same-provider round-trips
+   - `_known_fields` (via `storeMetadata`) = semantic data for cross-provider translation (`toolName`, `isError`, `isRefusal`, `originalType`)
 
 ### Key Design Decisions
 
@@ -1260,70 +1245,74 @@ export type ProviderMessage<P extends Provider> =
 
 #### The Problem
 
-When translating from Provider A to Provider B via GenAI, some semantically important data (like `toolName` on tool results) isn't part of the GenAI schema. Without a proper solution, you might be tempted to:
+When translating from Provider A to Provider B via GenAI, some semantically important data (like `toolName` on tool results) isn't part of the GenAI schema. Without a proper solution, you might be tempted to access source-provider-specific metadata, which creates coupling.
+
+#### The Solution: `_known_fields` for Cross-Provider Data
+
+The `_provider_metadata` object has two parts:
+
+1. **`_known_fields`**: Cross-provider semantic data that any target provider can read
+2. **Extra fields**: Provider-specific data for same-provider round-trips
 
 ```typescript
-// ANTI-PATTERN: Target provider checking source provider's metadata
-const promptlMeta = part._provider_metadata?.promptl;
-const isError = promptlMeta?.isError; // VercelAI knows about Promptl!
-```
-
-This creates coupling between providers and doesn't scale - each new provider would need to know about all existing providers.
-
-#### The Solution: Root-Level Shared Fields
-
-The `_provider_metadata` object has two types of fields:
-
-1. **Root-level shared fields** (camelCase): Cross-provider semantic data that any target provider can read
-2. **Provider-specific slots** (snake_case): Data for same-provider round-trips only
-
-```typescript
-// ProviderMetadataSchema structure:
+// _provider_metadata structure:
 {
-  // Root-level shared fields - ANY provider can read these
-  toolName: z.string().optional(),      // Tool name for tool_call_response parts
-  isError: z.boolean().optional(),      // Error indicator
-  isRefusal: z.boolean().optional(),    // Refusal indicator
-  originalType: z.string().optional(),  // Original type for lossy conversions
+  // Known fields - ANY provider can read these via getKnownFields()
+  _known_fields: {
+    toolName: "get_weather",    // Tool name for tool_call_response parts
+    isError: true,              // Error indicator
+    isRefusal: false,           // Refusal indicator
+    originalType: "custom_type" // Original type for lossy conversions
+  },
 
-  // Provider-specific slots - ONLY read by same provider for round-trips
-  promptl: PromptlMetadataSchema.optional(),
-  vercel_ai: VercelAIMetadataSchema.optional(),
-  // ...other providers
+  // Extra fields - provider-specific data for round-trips
+  custom_field: "value",
+  annotations: [...],
 }
 ```
 
 #### How to Use This
 
-**In `toGenAI` (source providers)**: Write cross-provider data to root level, provider-specific data to your slot:
+**In `toGenAI` (source providers)**: Use `storeMetadata` to store both known and extra fields:
 
 ```typescript
-// Correct: Store shared data at root level
-_provider_metadata: {
-  toolName: content.toolName,           // Root level - target can read
-  isError: true,                        // Root level - target can read
-  promptl: { internalField: "..." },    // Your slot - for round-trip only
-}
+import { storeMetadata } from "$package/utils";
+
+// Store known fields (for cross-provider translation) and extra fields (for round-trips)
+const metadata = storeMetadata(
+  existingMetadata,     // Any existing metadata from input
+  { annotations: [...] }, // Extra fields (provider-specific)
+  { toolName: "...", isError: true } // Known fields (cross-provider)
+);
 ```
 
-**In `fromGenAI` (target providers)**: Read ONLY from root-level shared fields:
+**In `fromGenAI` (target providers)**: Use `getKnownFields` to read cross-provider data:
 
 ```typescript
-// Correct: Read from root level only
-const toolName = partMeta?.toolName ?? "unknown";
-const isError = partMeta?.isError ?? false;
+import { readMetadata, getKnownFields, applyMetadataMode } from "$package/utils";
 
-// NEVER do this:
-const promptlMeta = partMeta?.promptl; // Don't check other providers!
+const metadata = readMetadata(part);
+const knownFields = getKnownFields(metadata);
+
+// Use known fields for accurate translation
+const toolName = knownFields.toolName ?? "unknown";
+const isError = knownFields.isError ?? false;
+
+// Apply metadata mode for output
+return applyMetadataMode(baseEntity, metadata, providerMetadata, useCamelCase);
 ```
 
-#### Naming Convention
+#### Provider Metadata Modes
 
-The naming convention naturally distinguishes shared vs provider-specific:
-- **Shared fields**: camelCase (`toolName`, `isError`, `isRefusal`, `originalType`)
-- **Provider slots**: snake_case (`promptl`, `vercel_ai`, `openai_completions`)
+The `providerMetadata` option controls how metadata appears in output:
 
-This makes it easy to see at a glance whether you're accessing shared or provider-specific data.
+| Mode | Description | Use Case |
+|------|-------------|----------|
+| `"preserve"` | Keep `_provider_metadata` nested in output | Storing as GenAI format |
+| `"passthrough"` | Spread extra fields as direct properties | Lossless round-trips |
+| `"strip"` | Don't include metadata | Clean output |
+
+**Note**: When translating between the same provider (e.g., Promptl → Promptl), `providerMetadata` is automatically set to `"passthrough"` for lossless round-trips.
 
 ## Commands
 

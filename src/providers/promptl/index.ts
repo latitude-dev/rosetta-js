@@ -6,7 +6,6 @@
  */
 
 import type { GenAIMessage, GenAIPart } from "$package/core/genai";
-import type { PromptlMetadata } from "$package/providers/promptl/metadata";
 import {
   type PromptlAssistantMessage,
   type PromptlContent,
@@ -20,7 +19,15 @@ import {
   type ProviderSpecification,
   type ProviderToGenAIArgs,
 } from "$package/providers/provider";
-import { extractExtraFields, isUrlString } from "$package/utils";
+import {
+  applyMetadataMode,
+  extractExtraFields,
+  getKnownFields,
+  isUrlString,
+  type ProviderMetadataMode,
+  readMetadata,
+  storeMetadata,
+} from "$package/utils";
 
 export const PromptlSpecification = {
   provider: Provider.Promptl,
@@ -53,13 +60,13 @@ export const PromptlSpecification = {
     return { messages: converted };
   },
 
-  fromGenAI({ messages }: ProviderFromGenAIArgs) {
+  fromGenAI({ messages, providerMetadata }: ProviderFromGenAIArgs) {
     // Build a lookup map from tool call id to tool name from all tool_call parts
     const toolCallNameMap = buildToolCallNameMap(messages);
 
     const converted: PromptlMessage[] = [];
     for (const message of messages) {
-      converted.push(...genAIMessageToPromptl(message, toolCallNameMap));
+      converted.push(...genAIMessageToPromptl(message, toolCallNameMap, providerMetadata));
     }
 
     return { messages: converted };
@@ -111,23 +118,29 @@ function promptlContentToGenAI(content: PromptlContent): GenAIPart[] {
     "toolArguments",
     "data",
     "result",
+    "_provider_metadata",
+    "_providerMetadata",
   ];
   const extraFields = extractExtraFields(content, knownContentKeys as (keyof PromptlContent)[]);
+  const existingMetadata = readMetadata(content as unknown as Record<string, unknown>);
 
-  const metadata: PromptlMetadata = extraFields;
-  const hasMetadata = Object.keys(metadata).length > 0;
+  // Helper to build metadata
+  const buildMetadata = (knownFields = {}) => storeMetadata(existingMetadata, extraFields, knownFields);
 
   switch (content.type) {
-    case "text":
+    case "text": {
+      const metadata = buildMetadata();
       return [
         {
           type: "text",
           content: content.text ?? "",
-          ...(hasMetadata ? { _provider_metadata: { promptl: metadata } } : {}),
+          ...(metadata ? { _provider_metadata: metadata } : {}),
         },
       ];
+    }
 
     case "image": {
+      const metadata = buildMetadata();
       const imageValue = content.image;
       if (imageValue instanceof URL) {
         return [
@@ -135,7 +148,7 @@ function promptlContentToGenAI(content: PromptlContent): GenAIPart[] {
             type: "uri",
             modality: "image",
             uri: imageValue.toString(),
-            ...(hasMetadata ? { _provider_metadata: { promptl: metadata } } : {}),
+            ...(metadata ? { _provider_metadata: metadata } : {}),
           },
         ];
       }
@@ -146,7 +159,7 @@ function promptlContentToGenAI(content: PromptlContent): GenAIPart[] {
             type: "blob",
             modality: "image",
             content: base64,
-            ...(hasMetadata ? { _provider_metadata: { promptl: metadata } } : {}),
+            ...(metadata ? { _provider_metadata: metadata } : {}),
           },
         ];
       }
@@ -157,7 +170,7 @@ function promptlContentToGenAI(content: PromptlContent): GenAIPart[] {
             type: "blob",
             modality: "image",
             content: base64,
-            ...(hasMetadata ? { _provider_metadata: { promptl: metadata } } : {}),
+            ...(metadata ? { _provider_metadata: metadata } : {}),
           },
         ];
       }
@@ -168,7 +181,7 @@ function promptlContentToGenAI(content: PromptlContent): GenAIPart[] {
             type: "uri",
             modality: "image",
             uri: imageValue,
-            ...(hasMetadata ? { _provider_metadata: { promptl: metadata } } : {}),
+            ...(metadata ? { _provider_metadata: metadata } : {}),
           },
         ];
       }
@@ -177,12 +190,13 @@ function promptlContentToGenAI(content: PromptlContent): GenAIPart[] {
           type: "blob",
           modality: "image",
           content: imageValue,
-          ...(hasMetadata ? { _provider_metadata: { promptl: metadata } } : {}),
+          ...(metadata ? { _provider_metadata: metadata } : {}),
         },
       ];
     }
 
     case "file": {
+      const metadata = buildMetadata();
       const fileValue = content.file;
       const mimeType = content.mimeType;
       // Infer modality from mimeType
@@ -198,7 +212,7 @@ function promptlContentToGenAI(content: PromptlContent): GenAIPart[] {
             modality,
             mime_type: mimeType,
             uri: fileValue.toString(),
-            ...(hasMetadata ? { _provider_metadata: { promptl: metadata } } : {}),
+            ...(metadata ? { _provider_metadata: metadata } : {}),
           },
         ];
       }
@@ -210,7 +224,7 @@ function promptlContentToGenAI(content: PromptlContent): GenAIPart[] {
             modality,
             mime_type: mimeType,
             content: base64,
-            ...(hasMetadata ? { _provider_metadata: { promptl: metadata } } : {}),
+            ...(metadata ? { _provider_metadata: metadata } : {}),
           },
         ];
       }
@@ -222,7 +236,7 @@ function promptlContentToGenAI(content: PromptlContent): GenAIPart[] {
             modality,
             mime_type: mimeType,
             content: base64,
-            ...(hasMetadata ? { _provider_metadata: { promptl: metadata } } : {}),
+            ...(metadata ? { _provider_metadata: metadata } : {}),
           },
         ];
       }
@@ -234,7 +248,7 @@ function promptlContentToGenAI(content: PromptlContent): GenAIPart[] {
             modality,
             mime_type: mimeType,
             uri: fileValue,
-            ...(hasMetadata ? { _provider_metadata: { promptl: metadata } } : {}),
+            ...(metadata ? { _provider_metadata: metadata } : {}),
           },
         ];
       }
@@ -244,69 +258,65 @@ function promptlContentToGenAI(content: PromptlContent): GenAIPart[] {
           modality,
           mime_type: mimeType,
           content: fileValue,
-          ...(hasMetadata ? { _provider_metadata: { promptl: metadata } } : {}),
+          ...(metadata ? { _provider_metadata: metadata } : {}),
         },
       ];
     }
 
-    case "reasoning":
+    case "reasoning": {
       // id and isStreaming are automatically in metadata via extraFields
+      const metadata = buildMetadata();
       return [
         {
           type: "reasoning",
           content: content.text,
-          ...(hasMetadata ? { _provider_metadata: { promptl: metadata } } : {}),
-        },
-      ];
-
-    case "redacted-reasoning": {
-      // Map to reasoning (closest GenAI equivalent), store original type at root level for cross-provider access
-      const hasMetadata = Object.keys(metadata).length > 0;
-      return [
-        {
-          type: "reasoning",
-          content: content.data,
-          _provider_metadata: {
-            // Root-level shared field for cross-provider access
-            originalType: "redacted-reasoning",
-            // Provider-specific data for round-trip
-            ...(hasMetadata ? { promptl: metadata } : {}),
-          },
+          ...(metadata ? { _provider_metadata: metadata } : {}),
         },
       ];
     }
 
-    case "tool-call":
+    case "redacted-reasoning": {
+      // Map to reasoning (closest GenAI equivalent), store original type in known fields
+      const metadata = buildMetadata({ originalType: "redacted-reasoning" });
+      return [
+        {
+          type: "reasoning",
+          content: content.data,
+          ...(metadata ? { _provider_metadata: metadata } : {}),
+        },
+      ];
+    }
+
+    case "tool-call": {
+      const metadata = buildMetadata();
       return [
         {
           type: "tool_call",
           id: content.toolCallId,
           name: content.toolName,
           arguments: getToolArguments(content),
-          ...(hasMetadata ? { _provider_metadata: { promptl: metadata } } : {}),
+          ...(metadata ? { _provider_metadata: metadata } : {}),
         },
       ];
+    }
 
     case "tool-result": {
-      // Check if isError is in the metadata (from extraFields)
-      // biome-ignore lint/complexity/useLiteralKeys: required for TypeScript index signature access
-      const isError = "isError" in metadata ? (metadata["isError"] as boolean) : undefined;
-      // Remove isError from metadata since it's now at root level
-      const { isError: _, ...restMetadata } = metadata as { isError?: boolean };
-      const hasRestMetadata = Object.keys(restMetadata).length > 0;
+      // Check if isError is in extraFields
+      // biome-ignore lint/complexity/useLiteralKeys: required for index signature access
+      const isError = "isError" in extraFields ? (extraFields["isError"] as boolean) : undefined;
+      // Remove isError from extraFields since it's going to known fields
+      const { isError: _, ...restExtra } = extraFields;
+      const metadata = storeMetadata(existingMetadata, restExtra, {
+        toolName: content.toolName,
+        ...(isError ? { isError: true } : {}),
+      });
 
       return [
         {
           type: "tool_call_response",
           id: content.toolCallId,
           response: content.result,
-          _provider_metadata: {
-            // Root-level shared fields for cross-provider access
-            toolName: content.toolName,
-            ...(isError ? { isError: true } : {}),
-            // Provider-specific data for round-trip
-            ...(hasRestMetadata ? { promptl: restMetadata } : {}),
-          },
+          ...(metadata ? { _provider_metadata: metadata } : {}),
         },
       ];
     }
@@ -315,23 +325,34 @@ function promptlContentToGenAI(content: PromptlContent): GenAIPart[] {
 
 /** Converts a Promptl ToolCall (from toolCalls array) to a GenAI tool_call part. */
 function promptlToolCallToGenAI(toolCall: PromptlToolCall): GenAIPart {
-  const knownKeys = ["id", "name", "arguments"];
+  const knownKeys = ["id", "name", "arguments", "_provider_metadata", "_providerMetadata"];
   const extraFields = extractExtraFields(toolCall, knownKeys as (keyof PromptlToolCall)[]);
-  const hasMetadata = Object.keys(extraFields).length > 0;
+  const existingMetadata = readMetadata(toolCall as unknown as Record<string, unknown>);
+  const metadata = storeMetadata(existingMetadata, extraFields, {});
 
   return {
     type: "tool_call",
     id: toolCall.id,
     name: toolCall.name,
     arguments: toolCall.arguments,
-    ...(hasMetadata ? { _provider_metadata: { promptl: extraFields } } : {}),
+    ...(metadata ? { _provider_metadata: metadata } : {}),
   };
 }
 
 /** Converts a Promptl message to a GenAI message. */
 function promptlMessageToGenAI(message: PromptlMessage): GenAIMessage {
-  const knownMessageKeys = ["role", "content", "name", "toolName", "toolId", "toolCalls"];
+  const knownMessageKeys = [
+    "role",
+    "content",
+    "name",
+    "toolName",
+    "toolId",
+    "toolCalls",
+    "_provider_metadata",
+    "_providerMetadata",
+  ];
   const extraFields = extractExtraFields(message, knownMessageKeys as (keyof PromptlMessage)[]);
+  const existingMetadata = readMetadata(message as unknown as Record<string, unknown>);
 
   // GenAI accepts any string role, so we pass the Promptl role directly
   const genAIRole = message.role;
@@ -387,17 +408,12 @@ function promptlMessageToGenAI(message: PromptlMessage): GenAIMessage {
         response = contentParts;
       }
 
-      const hasExtraFields = Object.keys(extraFields).length > 0;
+      const metadata = storeMetadata(existingMetadata, extraFields, { toolName: message.toolName });
       parts.push({
         type: "tool_call_response",
         id: message.toolId,
         response,
-        _provider_metadata: {
-          // Root-level shared field for cross-provider access
-          toolName: message.toolName,
-          // Provider-specific data for round-trip
-          ...(hasExtraFields ? { promptl: extraFields } : {}),
-        },
+        ...(metadata ? { _provider_metadata: metadata } : {}),
       });
     } else {
       // New format: tool-result content items become tool_call_response parts
@@ -418,82 +434,79 @@ function promptlMessageToGenAI(message: PromptlMessage): GenAIMessage {
   }
 
   // Build metadata for message level
-  const hasMessageMetadata = Object.keys(extraFields).length > 0;
+  const msgMetadata = message.role !== "tool" ? storeMetadata(existingMetadata, extraFields, {}) : undefined;
 
   return {
     role: genAIRole,
     parts,
     ...(message.role === "user" && message.name ? { name: message.name } : {}),
-    ...(hasMessageMetadata && message.role !== "tool" ? { _provider_metadata: { promptl: extraFields } } : {}),
+    ...(msgMetadata ? { _provider_metadata: msgMetadata } : {}),
   };
 }
 
 /** Converts a GenAI part to Promptl content. */
-function genAIPartToPromptl(part: GenAIPart): PromptlContent | null {
-  const extraFromMeta = part._provider_metadata?.promptl ?? {};
+function genAIPartToPromptl(part: GenAIPart, mode: ProviderMetadataMode): PromptlContent | null {
+  const metadata = readMetadata(part as unknown as Record<string, unknown>);
+  const known = getKnownFields(metadata);
+
+  // Helper to apply metadata mode to a content object
+  const applyMode = <T extends object>(content: T): T => applyMetadataMode(content, metadata, mode, true) as T;
 
   switch (part.type) {
     case "text":
-      return {
+      return applyMode({
         type: "text",
         text: part.content,
-        ...extraFromMeta,
-      } as PromptlContent;
+      } as PromptlContent);
 
     case "blob": {
       if (part.modality === "image") {
-        return {
+        return applyMode({
           type: "image",
           image: part.content, // base64 string
-          ...extraFromMeta,
-        } as PromptlContent;
+        } as PromptlContent);
       }
       // Other modalities become file
-      return {
+      return applyMode({
         type: "file",
         file: part.content,
         mimeType: part.mime_type ?? `application/${part.modality}`,
-        ...extraFromMeta,
-      } as PromptlContent;
+      } as PromptlContent);
     }
 
     case "uri": {
       if (part.modality === "image") {
-        return {
+        return applyMode({
           type: "image",
           image: part.uri,
-          ...extraFromMeta,
-        } as PromptlContent;
+        } as PromptlContent);
       }
       // Other modalities become file
-      return {
+      return applyMode({
         type: "file",
         file: part.uri,
         mimeType: part.mime_type ?? `application/${part.modality}`,
-        ...extraFromMeta,
-      } as PromptlContent;
+      } as PromptlContent);
     }
 
     case "file":
       // GenAI file (by file_id) - convert to file with id as content
-      return {
+      return applyMode({
         type: "file",
         file: part.file_id,
         mimeType: part.mime_type ?? `application/${part.modality}`,
-        ...extraFromMeta,
-      } as PromptlContent;
+      } as PromptlContent);
 
     case "tool_call": {
       // Include both `args` and `toolArguments` for backwards compatibility
       const args = (part.arguments as Record<string, unknown>) ?? {};
-      return {
+      return applyMode({
         type: "tool-call",
         toolCallId: part.id ?? "",
         toolName: part.name,
         args,
         toolArguments: args,
-        ...extraFromMeta,
-      } as PromptlContent;
+      } as PromptlContent);
     }
 
     case "tool_call_response":
@@ -501,48 +514,42 @@ function genAIPartToPromptl(part: GenAIPart): PromptlContent | null {
       return null;
 
     case "reasoning": {
-      // Read originalType from root-level shared field (cross-provider access)
-      const originalType = part._provider_metadata?.originalType as string | undefined;
-
-      if (originalType === "redacted-reasoning") {
+      // Read originalType from known fields
+      if (known.originalType === "redacted-reasoning") {
         // Restore the original redacted-reasoning type
-        // Get provider-specific metadata for same-provider round-trip
-        const promptlMeta = part._provider_metadata?.promptl ?? {};
-        return {
+        return applyMode({
           type: "redacted-reasoning",
           data: part.content,
-          ...promptlMeta,
-        } as PromptlContent;
+        } as PromptlContent);
       }
 
       // Regular reasoning content
-      return {
+      return applyMode({
         type: "reasoning",
         text: part.content,
-        ...extraFromMeta,
-      } as PromptlContent;
+      } as PromptlContent);
     }
 
     default:
       // Generic part - convert to text if it has content, otherwise skip
       if ("content" in part && typeof part.content === "string") {
-        return {
+        return applyMode({
           type: "text",
           text: part.content,
           _genericType: part.type,
-          ...extraFromMeta,
-        } as PromptlContent;
+        } as PromptlContent);
       }
       return null;
   }
 }
 
 /** Converts a GenAI message to Promptl message(s). */
-function genAIMessageToPromptl(message: GenAIMessage, toolCallNameMap: Map<string, string>): PromptlMessage[] {
-  const promptlMeta = message._provider_metadata?.promptl;
-
-  // Use all metadata fields - they were stored specifically to preserve Promptl-specific data
-  const extraFromMeta = promptlMeta ?? {};
+function genAIMessageToPromptl(
+  message: GenAIMessage,
+  toolCallNameMap: Map<string, string>,
+  mode: ProviderMetadataMode,
+): PromptlMessage[] {
+  const msgMetadata = readMetadata(message as unknown as Record<string, unknown>);
 
   // Handle tool role specially - each tool_call_response becomes a separate message
   if (message.role === "tool") {
@@ -550,13 +557,14 @@ function genAIMessageToPromptl(message: GenAIMessage, toolCallNameMap: Map<strin
 
     for (const part of message.parts) {
       if (part.type === "tool_call_response") {
-        const partMeta = part._provider_metadata;
+        const partMetadata = readMetadata(part as unknown as Record<string, unknown>);
+        const known = getKnownFields(partMetadata);
         // Type assertion needed because GenAIGenericPartSchema overlaps with literal types
         const toolId = String((part.id as string | null | undefined) ?? "");
 
-        // Read toolName from root-level shared field (cross-provider access)
-        let toolName = partMeta?.toolName as string | undefined;
-        // Fallback: try to infer from matching tool call if not in shared field
+        // Read toolName from known fields
+        let toolName = known.toolName;
+        // Fallback: try to infer from matching tool call if not in known fields
         if (!toolName && toolId && toolCallNameMap.has(toolId)) {
           toolName = toolCallNameMap.get(toolId);
         }
@@ -571,23 +579,22 @@ function genAIMessageToPromptl(message: GenAIMessage, toolCallNameMap: Map<strin
         } else if (Array.isArray(part.response)) {
           // Response was an array of GenAI parts
           content = (part.response as GenAIPart[])
-            .map((p) => genAIPartToPromptl(p))
+            .map((p) => genAIPartToPromptl(p, mode))
             .filter((c): c is PromptlContent => c !== null);
         } else {
           // Other response types - serialize to JSON text
           content = [{ type: "text", text: JSON.stringify(part.response) }];
         }
 
-        // Get provider-specific metadata for same-provider round-trip
-        const promptlPartMeta = partMeta?.promptl ?? {};
-
-        toolMessages.push({
-          role: "tool",
+        // Apply metadata mode to the tool message
+        const baseToolMsg = {
+          role: "tool" as const,
           toolName: String(toolName),
           toolId,
           content,
-          ...promptlPartMeta,
-        } as PromptlMessage);
+        };
+
+        toolMessages.push(applyMetadataMode(baseToolMsg, partMetadata, mode, true) as PromptlMessage);
       }
     }
 
@@ -597,7 +604,7 @@ function genAIMessageToPromptl(message: GenAIMessage, toolCallNameMap: Map<strin
   // Convert parts to content
   const content: PromptlContent[] = [];
   for (const part of message.parts) {
-    const converted = genAIPartToPromptl(part);
+    const converted = genAIPartToPromptl(part, mode);
     if (converted) {
       content.push(converted);
     }
@@ -621,12 +628,8 @@ function genAIMessageToPromptl(message: GenAIMessage, toolCallNameMap: Map<strin
   const baseMessage = {
     role,
     content,
-    ...extraFromMeta,
+    ...(role === "user" && message.name ? { name: message.name } : {}),
   };
 
-  if (role === "user" && message.name) {
-    return [{ ...baseMessage, role: "user", name: message.name } as PromptlMessage];
-  }
-
-  return [baseMessage as PromptlMessage];
+  return [applyMetadataMode(baseMessage, msgMetadata, mode, true) as PromptlMessage];
 }

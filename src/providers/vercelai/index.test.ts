@@ -306,7 +306,7 @@ describe("VercelAISpecification", () => {
         const result = VercelAISpecification.toGenAI({ messages, direction: "output" });
 
         // biome-ignore lint/complexity/useLiteralKeys: required for TypeScript index signature access
-        expect(result.messages[0]?.parts[0]?._provider_metadata?.vercel_ai?.["providerExecuted"]).toBe(true);
+        expect(result.messages[0]?.parts[0]?._provider_metadata?.["providerExecuted"]).toBe(true);
       });
     });
 
@@ -331,8 +331,11 @@ describe("VercelAISpecification", () => {
         expect(result.messages[0]?.role).toBe("tool");
         expect(result.messages[0]?.parts[0]?.type).toBe("tool_call_response");
         expect((result.messages[0]?.parts[0] as { id: string }).id).toBe("call-123");
-        // toolName is stored at root level for cross-provider access
-        expect(result.messages[0]?.parts[0]?._provider_metadata?.toolName).toBe("get_weather");
+        // toolName is stored in _known_fields for cross-provider access
+        expect(
+          // biome-ignore lint/complexity/useLiteralKeys: required for index signature access
+          (result.messages[0]?.parts[0]?._provider_metadata?._known_fields as Record<string, unknown>)?.["toolName"],
+        ).toBe("get_weather");
       });
     });
 
@@ -396,7 +399,7 @@ describe("VercelAISpecification", () => {
         const result = VercelAISpecification.toGenAI({ messages, direction: "input" });
 
         // biome-ignore lint/complexity/useLiteralKeys: required for TypeScript index signature access
-        expect(result.messages[0]?._provider_metadata?.vercel_ai?.["providerOptions"]).toEqual({ custom: "value" });
+        expect(result.messages[0]?._provider_metadata?.["providerOptions"]).toEqual({ custom: "value" });
       });
 
       it("should preserve extra part fields in part metadata", () => {
@@ -410,7 +413,7 @@ describe("VercelAISpecification", () => {
         const result = VercelAISpecification.toGenAI({ messages, direction: "input" });
 
         // biome-ignore lint/complexity/useLiteralKeys: required for TypeScript index signature access
-        expect(result.messages[0]?.parts[0]?._provider_metadata?.vercel_ai?.["providerOptions"]).toEqual({
+        expect(result.messages[0]?.parts[0]?._provider_metadata?.["providerOptions"]).toEqual({
           partMeta: 123,
         });
       });
@@ -457,7 +460,7 @@ describe("VercelAISpecification", () => {
       it("should convert GenAI text part to VercelAI text content", () => {
         const messages: GenAIMessage[] = [{ role: "user", parts: [{ type: "text", content: "Hello" }] }];
 
-        const result = VercelAISpecification.fromGenAI({ messages, direction: "output" });
+        const result = VercelAISpecification.fromGenAI({ messages, direction: "output", providerMetadata: "strip" });
 
         expect(result.messages).toHaveLength(1);
         expect(result.messages[0]?.role).toBe("user");
@@ -476,7 +479,7 @@ describe("VercelAISpecification", () => {
           },
         ];
 
-        const result = VercelAISpecification.fromGenAI({ messages, direction: "output" });
+        const result = VercelAISpecification.fromGenAI({ messages, direction: "output", providerMetadata: "strip" });
 
         expect(Array.isArray(result.messages[0]?.content)).toBe(true);
         const content = result.messages[0]?.content as Array<{ type: string; text: string }>;
@@ -490,7 +493,7 @@ describe("VercelAISpecification", () => {
       it("should convert system role to VercelAI system message", () => {
         const messages: GenAIMessage[] = [{ role: "system", parts: [{ type: "text", content: "Be helpful" }] }];
 
-        const result = VercelAISpecification.fromGenAI({ messages, direction: "output" });
+        const result = VercelAISpecification.fromGenAI({ messages, direction: "output", providerMetadata: "strip" });
 
         expect(result.messages[0]?.role).toBe("system");
         expect(result.messages[0]?.content).toBe("Be helpful");
@@ -507,7 +510,7 @@ describe("VercelAISpecification", () => {
           },
         ];
 
-        const result = VercelAISpecification.fromGenAI({ messages, direction: "output" });
+        const result = VercelAISpecification.fromGenAI({ messages, direction: "output", providerMetadata: "strip" });
 
         expect(result.messages[0]?.content).toBe("Be helpful\nBe concise");
       });
@@ -522,7 +525,7 @@ describe("VercelAISpecification", () => {
           },
         ];
 
-        const result = VercelAISpecification.fromGenAI({ messages, direction: "output" });
+        const result = VercelAISpecification.fromGenAI({ messages, direction: "output", providerMetadata: "strip" });
 
         const content = result.messages[0]?.content as Array<{ type: string; image: string }>;
         expect(content[0]?.type).toBe("image");
@@ -537,7 +540,7 @@ describe("VercelAISpecification", () => {
           },
         ];
 
-        const result = VercelAISpecification.fromGenAI({ messages, direction: "output" });
+        const result = VercelAISpecification.fromGenAI({ messages, direction: "output", providerMetadata: "strip" });
 
         const content = result.messages[0]?.content as Array<{ type: string; data: string; mediaType: string }>;
         expect(content[0]?.type).toBe("file");
@@ -555,7 +558,7 @@ describe("VercelAISpecification", () => {
           },
         ];
 
-        const result = VercelAISpecification.fromGenAI({ messages, direction: "output" });
+        const result = VercelAISpecification.fromGenAI({ messages, direction: "output", providerMetadata: "strip" });
 
         const content = result.messages[0]?.content as Array<{ type: string; image: string }>;
         expect(content[0]?.type).toBe("image");
@@ -572,7 +575,7 @@ describe("VercelAISpecification", () => {
           },
         ];
 
-        const result = VercelAISpecification.fromGenAI({ messages, direction: "output" });
+        const result = VercelAISpecification.fromGenAI({ messages, direction: "output", providerMetadata: "strip" });
 
         const content = result.messages[0]?.content as Array<{ type: string; data: string; mediaType: string }>;
         expect(content[0]?.type).toBe("file");
@@ -590,7 +593,7 @@ describe("VercelAISpecification", () => {
           },
         ];
 
-        const result = VercelAISpecification.fromGenAI({ messages, direction: "output" });
+        const result = VercelAISpecification.fromGenAI({ messages, direction: "output", providerMetadata: "strip" });
 
         const content = result.messages[0]?.content as Array<{ type: string; text: string }>;
         expect(content[0]?.type).toBe("reasoning");
@@ -606,13 +609,13 @@ describe("VercelAISpecification", () => {
               {
                 type: "reasoning",
                 content: "hidden-data",
-                _provider_metadata: { promptl: { originalType: "redacted-reasoning" } },
+                _provider_metadata: { _known_fields: { originalType: "redacted-reasoning" } },
               },
             ],
           },
         ];
 
-        const result = VercelAISpecification.fromGenAI({ messages, direction: "output" });
+        const result = VercelAISpecification.fromGenAI({ messages, direction: "output", providerMetadata: "strip" });
 
         // VercelAI doesn't have redacted-reasoning, so it becomes regular reasoning
         const content = result.messages[0]?.content as Array<{ type: string; text: string }>;
@@ -630,7 +633,7 @@ describe("VercelAISpecification", () => {
           },
         ];
 
-        const result = VercelAISpecification.fromGenAI({ messages, direction: "output" });
+        const result = VercelAISpecification.fromGenAI({ messages, direction: "output", providerMetadata: "strip" });
 
         const content = result.messages[0]?.content as Array<{
           type: string;
@@ -652,7 +655,7 @@ describe("VercelAISpecification", () => {
           },
         ];
 
-        const result = VercelAISpecification.fromGenAI({ messages, direction: "output" });
+        const result = VercelAISpecification.fromGenAI({ messages, direction: "output", providerMetadata: "strip" });
 
         const content = result.messages[0]?.content as Array<{ toolCallId: string }>;
         expect(content[0]?.toolCallId).toBe("");
@@ -669,13 +672,13 @@ describe("VercelAISpecification", () => {
                 type: "tool_call_response",
                 id: "call-123",
                 response: "Success!",
-                _provider_metadata: { vercel_ai: { toolName: "my_tool" } },
+                _provider_metadata: { _known_fields: { toolName: "my_tool" } },
               },
             ],
           },
         ];
 
-        const result = VercelAISpecification.fromGenAI({ messages, direction: "output" });
+        const result = VercelAISpecification.fromGenAI({ messages, direction: "output", providerMetadata: "strip" });
 
         expect(result.messages).toHaveLength(1);
         expect(result.messages[0]?.role).toBe("tool");
@@ -704,7 +707,7 @@ describe("VercelAISpecification", () => {
           },
         ];
 
-        const result = VercelAISpecification.fromGenAI({ messages, direction: "output" });
+        const result = VercelAISpecification.fromGenAI({ messages, direction: "output", providerMetadata: "strip" });
 
         expect(result.messages).toHaveLength(2);
         const toolContent = result.messages[1]?.content as Array<{ toolName: string }>;
@@ -719,7 +722,7 @@ describe("VercelAISpecification", () => {
           },
         ];
 
-        const result = VercelAISpecification.fromGenAI({ messages, direction: "output" });
+        const result = VercelAISpecification.fromGenAI({ messages, direction: "output", providerMetadata: "strip" });
 
         const toolContent = result.messages[0]?.content as Array<{ toolName: string }>;
         expect(toolContent[0]?.toolName).toBe("unknown");
@@ -734,14 +737,14 @@ describe("VercelAISpecification", () => {
                 type: "tool_call_response",
                 id: "call-123",
                 response: "Result",
-                // toolName is stored at root level for cross-provider access
-                _provider_metadata: { toolName: "cross_provider_tool" },
+                // toolName is stored in _known_fields for cross-provider access
+                _provider_metadata: { _known_fields: { toolName: "cross_provider_tool" } },
               },
             ],
           },
         ];
 
-        const result = VercelAISpecification.fromGenAI({ messages, direction: "output" });
+        const result = VercelAISpecification.fromGenAI({ messages, direction: "output", providerMetadata: "strip" });
 
         const toolContent = result.messages[0]?.content as Array<{ toolName: string }>;
         expect(toolContent[0]?.toolName).toBe("cross_provider_tool");
@@ -764,7 +767,7 @@ describe("VercelAISpecification", () => {
           },
         ];
 
-        const result = VercelAISpecification.fromGenAI({ messages, direction: "output" });
+        const result = VercelAISpecification.fromGenAI({ messages, direction: "output", providerMetadata: "strip" });
 
         const content = result.messages[0]?.content as Array<{
           type: string;
@@ -792,7 +795,7 @@ describe("VercelAISpecification", () => {
           },
         ];
 
-        const result = VercelAISpecification.fromGenAI({ messages, direction: "output" });
+        const result = VercelAISpecification.fromGenAI({ messages, direction: "output", providerMetadata: "strip" });
 
         const content = result.messages[0]?.content as Array<{
           type: string;
@@ -815,7 +818,7 @@ describe("VercelAISpecification", () => {
           },
         ];
 
-        const result = VercelAISpecification.fromGenAI({ messages, direction: "output" });
+        const result = VercelAISpecification.fromGenAI({ messages, direction: "output", providerMetadata: "strip" });
 
         // Single text part becomes string content
         expect(result.messages[0]?.content).toBe("Custom content");
@@ -832,7 +835,7 @@ describe("VercelAISpecification", () => {
           },
         ];
 
-        const result = VercelAISpecification.fromGenAI({ messages, direction: "output" });
+        const result = VercelAISpecification.fromGenAI({ messages, direction: "output", providerMetadata: "strip" });
 
         const content = result.messages[0]?.content as Array<{ type: string; text: string }>;
         expect(content[0]?.type).toBe("text");
@@ -848,11 +851,16 @@ describe("VercelAISpecification", () => {
           {
             role: "user",
             parts: [{ type: "text", content: "Hello" }],
-            _provider_metadata: { vercel_ai: { providerOptions: { custom: "value" } } },
+            _provider_metadata: { providerOptions: { custom: "value" } },
           },
         ];
 
-        const result = VercelAISpecification.fromGenAI({ messages, direction: "output" });
+        // Use passthrough mode to spread extra fields on output message
+        const result = VercelAISpecification.fromGenAI({
+          messages,
+          direction: "output",
+          providerMetadata: "passthrough",
+        });
 
         expect((result.messages[0] as { providerOptions?: unknown }).providerOptions).toEqual({ custom: "value" });
       });
@@ -866,7 +874,7 @@ describe("VercelAISpecification", () => {
           { role: "assistant", parts: [{ type: "text", content: "Assistant" }] },
         ];
 
-        const result = VercelAISpecification.fromGenAI({ messages, direction: "output" });
+        const result = VercelAISpecification.fromGenAI({ messages, direction: "output", providerMetadata: "strip" });
 
         expect(result.messages).toHaveLength(3);
         expect(result.messages[0]?.role).toBe("system");
@@ -881,7 +889,11 @@ describe("VercelAISpecification", () => {
       const original: VercelAIMessage[] = [{ role: "user", content: "Hello, world!" }];
 
       const genAI = VercelAISpecification.toGenAI({ messages: original, direction: "input" });
-      const restored = VercelAISpecification.fromGenAI({ messages: genAI.messages, direction: "output" });
+      const restored = VercelAISpecification.fromGenAI({
+        messages: genAI.messages,
+        direction: "output",
+        providerMetadata: "passthrough",
+      });
 
       expect(restored.messages[0]?.content).toBe("Hello, world!");
     });
@@ -890,7 +902,11 @@ describe("VercelAISpecification", () => {
       const original: VercelAIMessage[] = [{ role: "assistant", content: "I can help!" }];
 
       const genAI = VercelAISpecification.toGenAI({ messages: original, direction: "output" });
-      const restored = VercelAISpecification.fromGenAI({ messages: genAI.messages, direction: "output" });
+      const restored = VercelAISpecification.fromGenAI({
+        messages: genAI.messages,
+        direction: "output",
+        providerMetadata: "passthrough",
+      });
 
       expect(restored.messages[0]?.content).toBe("I can help!");
     });
@@ -899,7 +915,11 @@ describe("VercelAISpecification", () => {
       const original: VercelAIMessage[] = [{ role: "system", content: "Be helpful" }];
 
       const genAI = VercelAISpecification.toGenAI({ messages: original, direction: "input" });
-      const restored = VercelAISpecification.fromGenAI({ messages: genAI.messages, direction: "output" });
+      const restored = VercelAISpecification.fromGenAI({
+        messages: genAI.messages,
+        direction: "output",
+        providerMetadata: "passthrough",
+      });
 
       expect(restored.messages[0]?.content).toBe("Be helpful");
     });
@@ -910,7 +930,11 @@ describe("VercelAISpecification", () => {
       ];
 
       const genAI = VercelAISpecification.toGenAI({ messages: original, direction: "input" });
-      const restored = VercelAISpecification.fromGenAI({ messages: genAI.messages, direction: "output" });
+      const restored = VercelAISpecification.fromGenAI({
+        messages: genAI.messages,
+        direction: "output",
+        providerMetadata: "passthrough",
+      });
 
       const content = restored.messages[0]?.content as Array<{ type: string; image: string }>;
       expect(content[0]?.type).toBe("image");
@@ -926,7 +950,11 @@ describe("VercelAISpecification", () => {
       ];
 
       const genAI = VercelAISpecification.toGenAI({ messages: original, direction: "output" });
-      const restored = VercelAISpecification.fromGenAI({ messages: genAI.messages, direction: "output" });
+      const restored = VercelAISpecification.fromGenAI({
+        messages: genAI.messages,
+        direction: "output",
+        providerMetadata: "passthrough",
+      });
 
       const content = restored.messages[0]?.content as Array<{
         type: string;
@@ -949,7 +977,11 @@ describe("VercelAISpecification", () => {
       ];
 
       const genAI = VercelAISpecification.toGenAI({ messages: original, direction: "output" });
-      const restored = VercelAISpecification.fromGenAI({ messages: genAI.messages, direction: "output" });
+      const restored = VercelAISpecification.fromGenAI({
+        messages: genAI.messages,
+        direction: "output",
+        providerMetadata: "passthrough",
+      });
 
       const content = restored.messages[0]?.content as Array<{ type: string; text: string }>;
       expect(content[0]?.type).toBe("reasoning");
@@ -967,7 +999,11 @@ describe("VercelAISpecification", () => {
       ];
 
       const genAI = VercelAISpecification.toGenAI({ messages: original, direction: "input" });
-      const restored = VercelAISpecification.fromGenAI({ messages: genAI.messages, direction: "output" });
+      const restored = VercelAISpecification.fromGenAI({
+        messages: genAI.messages,
+        direction: "output",
+        providerMetadata: "passthrough",
+      });
 
       expect(restored.messages).toHaveLength(3);
       expect(restored.messages[0]?.role).toBe("system");
@@ -1094,7 +1130,7 @@ describe("VercelAISpecification", () => {
     });
 
     it("should handle fromGenAI with empty messages array", () => {
-      const result = VercelAISpecification.fromGenAI({ messages: [], direction: "output" });
+      const result = VercelAISpecification.fromGenAI({ messages: [], direction: "output", providerMetadata: "strip" });
       expect(result.messages).toEqual([]);
     });
 
@@ -1114,7 +1150,7 @@ describe("VercelAISpecification", () => {
         },
       ];
 
-      const result = VercelAISpecification.fromGenAI({ messages, direction: "output" });
+      const result = VercelAISpecification.fromGenAI({ messages, direction: "output", providerMetadata: "strip" });
 
       expect(result.messages).toEqual([]);
     });

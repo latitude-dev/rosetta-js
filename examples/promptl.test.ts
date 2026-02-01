@@ -6,7 +6,7 @@
  */
 
 import { Adapters, render } from "promptl-ai";
-import { type GenAIMessage, Provider, translate } from "rosetta-ai";
+import { type GenAIMessage, Provider, Translator, translate } from "rosetta-ai";
 import { describe, expect, it } from "vitest";
 
 describe("Promptl E2E", () => {
@@ -147,14 +147,15 @@ You specialize in {{ region }}.
         to: Provider.GenAI,
       });
 
-      // Verify source maps are preserved in GenAI metadata
+      // Verify source maps are preserved in GenAI metadata (now at flat level, not under promptl)
       const genAIPart = toGenAI.messages[0]?.parts.find(
-        (p) => p._provider_metadata?.promptl && "_promptlSourceMap" in (p._provider_metadata.promptl as object),
+        (p) => p._provider_metadata && "_promptlSourceMap" in p._provider_metadata,
       );
       expect(genAIPart).toBeDefined();
 
-      // Convert back to Promptl
-      const backToPromptl = translate(toGenAI.messages, {
+      // Convert back to Promptl with passthrough to restore source maps as direct properties
+      const passthroughTranslator = new Translator({ providerMetadata: "passthrough" });
+      const backToPromptl = passthroughTranslator.translate(toGenAI.messages, {
         from: Provider.GenAI,
         to: Provider.Promptl,
       });
@@ -184,12 +185,13 @@ You specialize in {{ region }}.
         adapter: Adapters.default,
       });
 
-      // Convert through GenAI and back
+      // Convert through GenAI and back (use passthrough to restore source maps as direct properties)
       const toGenAI = translate(compiled.messages, {
         from: Provider.Promptl,
         to: Provider.GenAI,
       });
-      const backToPromptl = translate(toGenAI.messages, {
+      const passthroughTranslator = new Translator({ providerMetadata: "passthrough" });
+      const backToPromptl = passthroughTranslator.translate(toGenAI.messages, {
         from: Provider.GenAI,
         to: Provider.Promptl,
       });
@@ -252,12 +254,13 @@ You specialize in {{ region }}.
       expect(typeof originalMap?.end).toBe("number");
       expect(originalMap?.identifier).toBe("name");
 
-      // Round-trip
+      // Round-trip (use passthrough to restore source maps as direct properties)
       const toGenAI = translate(compiled.messages, {
         from: Provider.Promptl,
         to: Provider.GenAI,
       });
-      const backToPromptl = translate(toGenAI.messages, {
+      const passthroughTranslator = new Translator({ providerMetadata: "passthrough" });
+      const backToPromptl = passthroughTranslator.translate(toGenAI.messages, {
         from: Provider.GenAI,
         to: Provider.Promptl,
       });
@@ -315,14 +318,15 @@ You are a {{ role }} assistant specializing in {{ domain }}.
       });
       expect(toGenAI.system).toBeDefined();
 
-      // Verify source map is preserved in GenAI system parts
+      // Verify source map is preserved in GenAI system parts (now at flat level)
       const systemPartWithMap = toGenAI.system?.find(
-        (p) => p._provider_metadata?.promptl && "_promptlSourceMap" in (p._provider_metadata.promptl as object),
+        (p) => p._provider_metadata && "_promptlSourceMap" in p._provider_metadata,
       );
       expect(systemPartWithMap).toBeDefined();
 
-      // Translate back with system included
-      const backToPromptl = translate(toGenAI.messages, {
+      // Translate back with system included (use passthrough to restore source maps as direct properties)
+      const passthroughTranslator = new Translator({ providerMetadata: "passthrough" });
+      const backToPromptl = passthroughTranslator.translate(toGenAI.messages, {
         from: Provider.GenAI,
         to: Provider.Promptl,
         system: toGenAI.system,
@@ -535,8 +539,11 @@ You are a {{ role }} assistant specializing in {{ domain }}.
       // redacted-reasoning maps to reasoning (closest GenAI equivalent) with originalType at root level
       expect(result.messages[0]?.parts[0]?.type).toBe("reasoning");
       expect((result.messages[0]?.parts[0] as { content: string }).content).toBe("encrypted-reasoning-data-xyz");
-      // originalType is stored at root level for cross-provider access
-      expect(result.messages[0]?.parts[0]?._provider_metadata?.originalType).toBe("redacted-reasoning");
+      // originalType is stored in _known_fields for cross-provider access
+      expect(
+        (result.messages[0]?.parts[0]?._provider_metadata?._known_fields as Record<string, unknown> | undefined)
+          ?.originalType,
+      ).toBe("redacted-reasoning");
     });
   });
 

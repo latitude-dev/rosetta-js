@@ -12,7 +12,6 @@ import {
   type ProviderSpecification,
   type ProviderToGenAIArgs,
 } from "$package/providers/provider";
-import type { VercelAIMetadata } from "$package/providers/vercelai/metadata";
 import {
   type VercelAIAssistantMessage,
   type VercelAIMessage,
@@ -22,7 +21,18 @@ import {
   type VercelAIToolMessage,
   type VercelAIUserMessage,
 } from "$package/providers/vercelai/schema";
-import { binaryToBase64, extractExtraFields, getUrlString, inferModality, isUrl } from "$package/utils";
+import {
+  applyMetadataMode,
+  binaryToBase64,
+  extractExtraFields,
+  getKnownFields,
+  getUrlString,
+  inferModality,
+  isUrl,
+  type ProviderMetadataMode,
+  readMetadata,
+  storeMetadata,
+} from "$package/utils";
 
 export const VercelAISpecification = {
   provider: Provider.VercelAI,
@@ -57,12 +67,12 @@ export const VercelAISpecification = {
     return { messages: converted };
   },
 
-  fromGenAI({ messages }: ProviderFromGenAIArgs) {
+  fromGenAI({ messages, providerMetadata }: ProviderFromGenAIArgs) {
     const toolCallNameMap = buildToolCallNameMap(messages);
 
     const converted: VercelAIMessage[] = [];
     for (const message of messages) {
-      converted.push(...genAIMessageToVercelAI(message, toolCallNameMap));
+      converted.push(...genAIMessageToVercelAI(message, toolCallNameMap, providerMetadata));
     }
 
     return { messages: converted };
@@ -88,21 +98,27 @@ function buildToolCallNameMap(messages: GenAIMessage[]): Map<string, string> {
 
 /** Convert a VercelAI part to GenAI parts. */
 function vercelAIPartToGenAI(part: VercelAIPart, knownPartKeys: string[]): GenAIPart[] {
-  const extraFields = extractExtraFields(part, knownPartKeys as (keyof typeof part)[]);
-  const metadata: VercelAIMetadata = extraFields;
-  const hasMetadata = Object.keys(metadata).length > 0;
+  const allKnownKeys = [...knownPartKeys, "_provider_metadata", "_providerMetadata"];
+  const extraFields = extractExtraFields(part, allKnownKeys as (keyof typeof part)[]);
+  const existingMetadata = readMetadata(part as unknown as Record<string, unknown>);
+
+  // Helper to build metadata
+  const buildMetadata = (knownFields = {}) => storeMetadata(existingMetadata, extraFields, knownFields);
 
   switch (part.type) {
-    case "text":
+    case "text": {
+      const metadata = buildMetadata();
       return [
         {
           type: "text",
           content: part.text,
-          ...(hasMetadata ? { _provider_metadata: { vercel_ai: metadata } } : {}),
+          ...(metadata ? { _provider_metadata: metadata } : {}),
         },
       ];
+    }
 
     case "image": {
+      const metadata = buildMetadata();
       const imageValue = part.image;
       if (isUrl(imageValue)) {
         return [
@@ -111,7 +127,7 @@ function vercelAIPartToGenAI(part: VercelAIPart, knownPartKeys: string[]): GenAI
             modality: "image",
             uri: getUrlString(imageValue),
             ...(part.mediaType ? { mime_type: part.mediaType } : {}),
-            ...(hasMetadata ? { _provider_metadata: { vercel_ai: metadata } } : {}),
+            ...(metadata ? { _provider_metadata: metadata } : {}),
           },
         ];
       }
@@ -123,7 +139,7 @@ function vercelAIPartToGenAI(part: VercelAIPart, knownPartKeys: string[]): GenAI
             modality: "image",
             content: binaryToBase64(imageValue),
             ...(part.mediaType ? { mime_type: part.mediaType } : {}),
-            ...(hasMetadata ? { _provider_metadata: { vercel_ai: metadata } } : {}),
+            ...(metadata ? { _provider_metadata: metadata } : {}),
           },
         ];
       }
@@ -134,12 +150,13 @@ function vercelAIPartToGenAI(part: VercelAIPart, knownPartKeys: string[]): GenAI
           modality: "image",
           content: String(imageValue),
           ...(part.mediaType ? { mime_type: part.mediaType } : {}),
-          ...(hasMetadata ? { _provider_metadata: { vercel_ai: metadata } } : {}),
+          ...(metadata ? { _provider_metadata: metadata } : {}),
         },
       ];
     }
 
     case "file": {
+      const metadata = buildMetadata();
       const fileValue = part.data;
       const modality = inferModality(part.mediaType);
 
@@ -150,7 +167,7 @@ function vercelAIPartToGenAI(part: VercelAIPart, knownPartKeys: string[]): GenAI
             modality,
             uri: getUrlString(fileValue),
             mime_type: part.mediaType,
-            ...(hasMetadata ? { _provider_metadata: { vercel_ai: metadata } } : {}),
+            ...(metadata ? { _provider_metadata: metadata } : {}),
           },
         ];
       }
@@ -162,7 +179,7 @@ function vercelAIPartToGenAI(part: VercelAIPart, knownPartKeys: string[]): GenAI
             modality,
             content: binaryToBase64(fileValue),
             mime_type: part.mediaType,
-            ...(hasMetadata ? { _provider_metadata: { vercel_ai: metadata } } : {}),
+            ...(metadata ? { _provider_metadata: metadata } : {}),
           },
         ];
       }
@@ -173,30 +190,34 @@ function vercelAIPartToGenAI(part: VercelAIPart, knownPartKeys: string[]): GenAI
           modality,
           content: String(fileValue),
           mime_type: part.mediaType,
-          ...(hasMetadata ? { _provider_metadata: { vercel_ai: metadata } } : {}),
+          ...(metadata ? { _provider_metadata: metadata } : {}),
         },
       ];
     }
 
-    case "reasoning":
+    case "reasoning": {
+      const metadata = buildMetadata();
       return [
         {
           type: "reasoning",
           content: part.text,
-          ...(hasMetadata ? { _provider_metadata: { vercel_ai: metadata } } : {}),
+          ...(metadata ? { _provider_metadata: metadata } : {}),
         },
       ];
+    }
 
-    case "tool-call":
+    case "tool-call": {
+      const metadata = buildMetadata();
       return [
         {
           type: "tool_call",
           id: part.toolCallId,
           name: part.toolName,
           arguments: part.input,
-          ...(hasMetadata ? { _provider_metadata: { vercel_ai: metadata } } : {}),
+          ...(metadata ? { _provider_metadata: metadata } : {}),
         },
       ];
+    }
 
     case "tool-result": {
       // Extract the actual value from the typed ToolResultOutput structure
@@ -230,48 +251,49 @@ function vercelAIPartToGenAI(part: VercelAIPart, knownPartKeys: string[]): GenAI
         response = output;
       }
 
-      const hasMetadata = Object.keys(metadata).length > 0;
+      // Store outputType in extra fields for round-trip, known fields for cross-provider
+      const extraWithOutputType = { ...extraFields, ...(output?.type ? { outputType: output.type } : {}) };
+      const metadata = storeMetadata(existingMetadata, extraWithOutputType, {
+        toolName: part.toolName,
+        ...(isError ? { isError: true } : {}),
+      });
+
       return [
         {
           type: "tool_call_response",
           id: part.toolCallId,
           response,
-          _provider_metadata: {
-            // Root-level shared fields for cross-provider access
-            toolName: part.toolName,
-            ...(isError ? { isError: true } : {}),
-            // Provider-specific data for round-trip (outputType needed to restore ToolResultOutput structure)
-            vercel_ai: {
-              outputType: output?.type,
-              ...(hasMetadata ? metadata : {}),
-            },
-          },
+          ...(metadata ? { _provider_metadata: metadata } : {}),
         },
       ];
     }
 
-    case "tool-approval-request":
+    case "tool-approval-request": {
+      const metadata = buildMetadata();
       return [
         {
           type: "tool-approval-request",
           content: "",
-          ...(hasMetadata ? { _provider_metadata: { vercel_ai: metadata } } : {}),
+          ...(metadata ? { _provider_metadata: metadata } : {}),
           approvalId: part.approvalId,
           toolCallId: part.toolCallId,
         },
       ];
+    }
 
-    case "tool-approval-response":
+    case "tool-approval-response": {
+      const metadata = buildMetadata();
       return [
         {
           type: "tool-approval-response",
           content: "",
-          ...(hasMetadata ? { _provider_metadata: { vercel_ai: metadata } } : {}),
+          ...(metadata ? { _provider_metadata: metadata } : {}),
           approvalId: part.approvalId,
           approved: part.approved,
           ...(part.reason ? { reason: part.reason } : {}),
         },
       ];
+    }
 
     default:
       return [];
@@ -280,9 +302,10 @@ function vercelAIPartToGenAI(part: VercelAIPart, knownPartKeys: string[]): GenAI
 
 /** Convert a VercelAI message to GenAI message. */
 function vercelAIMessageToGenAI(message: VercelAIMessage): GenAIMessage {
-  const knownMessageKeys = ["role", "content"];
+  const knownMessageKeys = ["role", "content", "_provider_metadata", "_providerMetadata"];
   const extraFields = extractExtraFields(message, knownMessageKeys as (keyof VercelAIMessage)[]);
-  const hasMessageMetadata = Object.keys(extraFields).length > 0;
+  const existingMetadata = readMetadata(message as unknown as Record<string, unknown>);
+  const msgMetadata = storeMetadata(existingMetadata, extraFields, {});
 
   const parts: GenAIPart[] = [];
 
@@ -345,115 +368,113 @@ function vercelAIMessageToGenAI(message: VercelAIMessage): GenAIMessage {
   return {
     role: message.role,
     parts,
-    ...(hasMessageMetadata ? { _provider_metadata: { vercel_ai: extraFields } } : {}),
+    ...(msgMetadata ? { _provider_metadata: msgMetadata } : {}),
   };
 }
 
 /** Convert a GenAI part to VercelAI part. */
-function genAIPartToVercelAI(part: GenAIPart, toolCallNameMap: Map<string, string>): VercelAIPart | null {
-  const extraFromMeta = part._provider_metadata?.vercel_ai ?? {};
+function genAIPartToVercelAI(
+  part: GenAIPart,
+  toolCallNameMap: Map<string, string>,
+  mode: ProviderMetadataMode,
+): VercelAIPart | null {
+  const metadata = readMetadata(part as unknown as Record<string, unknown>);
+  const known = getKnownFields(metadata);
+
+  // Helper to apply metadata mode to a part
+  const applyMode = <T extends object>(content: T): T => applyMetadataMode(content, metadata, mode, true) as T;
 
   switch (part.type) {
     case "text":
-      return {
+      return applyMode({
         type: "text",
         text: part.content,
-        ...extraFromMeta,
-      } as VercelAIPart;
+      } as VercelAIPart);
 
     case "blob": {
       if (part.modality === "image") {
-        return {
+        return applyMode({
           type: "image",
           image: part.content, // base64 string
           ...(part.mime_type ? { mediaType: part.mime_type } : {}),
-          ...extraFromMeta,
-        } as VercelAIPart;
+        } as VercelAIPart);
       }
       // Other modalities become file
-      return {
+      return applyMode({
         type: "file",
         data: part.content,
         mediaType: part.mime_type ?? `application/${part.modality}`,
-        ...extraFromMeta,
-      } as VercelAIPart;
+      } as VercelAIPart);
     }
 
     case "uri": {
       if (part.modality === "image") {
-        return {
+        return applyMode({
           type: "image",
           image: part.uri,
           ...(part.mime_type ? { mediaType: part.mime_type } : {}),
-          ...extraFromMeta,
-        } as VercelAIPart;
+        } as VercelAIPart);
       }
       // Other modalities become file
-      return {
+      return applyMode({
         type: "file",
         data: part.uri,
         mediaType: part.mime_type ?? `application/${part.modality}`,
-        ...extraFromMeta,
-      } as VercelAIPart;
+      } as VercelAIPart);
     }
 
     case "file":
       // GenAI file (by file_id) - convert to file
-      return {
+      return applyMode({
         type: "file",
         data: part.file_id,
         mediaType: part.mime_type ?? `application/${part.modality}`,
-        ...extraFromMeta,
-      } as VercelAIPart;
+      } as VercelAIPart);
 
     case "reasoning":
-      return {
+      return applyMode({
         type: "reasoning",
         text: part.content,
-        ...extraFromMeta,
-      } as VercelAIPart;
+      } as VercelAIPart);
 
     case "tool_call":
-      return {
+      return applyMode({
         type: "tool-call",
         toolCallId: part.id ?? "",
         toolName: part.name,
         input: part.arguments,
-        ...extraFromMeta,
-      } as VercelAIPart;
+      } as VercelAIPart);
 
     case "tool_call_response": {
-      const partMeta = part._provider_metadata;
       const toolId = String((part.id as string | null | undefined) ?? "");
 
-      // Read toolName from root-level shared field (cross-provider access)
-      let toolName = partMeta?.toolName as string | undefined;
-      // Fallback: try to infer from matching tool call if not in shared field
+      // Read toolName from known fields
+      let toolName = known.toolName;
+      // Fallback: try to infer from matching tool call if not in known fields
       if (!toolName && toolId && toolCallNameMap.has(toolId)) {
         toolName = toolCallNameMap.get(toolId);
       }
       toolName = toolName ?? "unknown";
 
-      // Read isError from root-level shared field (cross-provider access)
-      const hasError = partMeta?.isError as boolean | undefined;
+      // Read isError from known fields
+      const hasError = known.isError;
 
-      // Get stored output type from provider-specific metadata (for same-provider round-trip)
-      const vercelMeta = partMeta?.vercel_ai as Record<string, unknown> | undefined;
-      // biome-ignore lint/complexity/useLiteralKeys: required for TypeScript index signature access
-      const storedOutputType = vercelMeta?.["outputType"] as string | undefined;
+      // Get stored output type from extra fields (for same-provider round-trip)
+      // biome-ignore lint/complexity/useLiteralKeys: required for index signature access
+      const outputType = metadata?.["outputType"] as string | undefined;
 
       // Wrap response in typed ToolResultOutput structure
       let output: unknown;
       const response = part.response;
 
-      if (storedOutputType) {
+      if (outputType) {
         // Restore original output type from metadata
-        if (storedOutputType === "execution-denied") {
+        if (outputType === "execution-denied") {
           output = { type: "execution-denied", reason: typeof response === "string" ? response : undefined };
-        } else if (storedOutputType === "content") {
+        } else if (outputType === "content") {
           output = { type: "content", value: response };
         } else {
-          output = { type: storedOutputType, value: response };
+          output = { type: outputType, value: response };
         }
       } else if (typeof response === "string") {
         output = { type: hasError ? "error-text" : "text", value: response };
@@ -461,36 +482,41 @@ function genAIPartToVercelAI(part: GenAIPart, toolCallNameMap: Map<string, strin
         output = { type: hasError ? "error-json" : "json", value: response };
       }
 
-      // Extract metadata except outputType (toolName and isError are at root level now)
-      const restMeta = vercelMeta
-        ? extractExtraFields(vercelMeta, ["outputType"] as (keyof Record<string, unknown>)[])
-        : {};
-
-      return {
-        type: "tool-result",
+      // Build base output and apply mode (excluding outputType from passthrough since it's internal)
+      const baseOutput = {
+        type: "tool-result" as const,
         toolCallId: toolId,
         toolName,
         output,
-        ...restMeta,
-      } as VercelAIPart;
+      };
+
+      // For passthrough, exclude outputType since it's internal
+      if (mode === "passthrough" && metadata) {
+        const { _known_fields, _knownFields, outputType: _, ...extraFields } = metadata;
+        if (Object.keys(extraFields).length > 0) {
+          return { ...baseOutput, ...extraFields } as VercelAIPart;
+        }
+        return baseOutput as VercelAIPart;
+      }
+
+      return applyMode(baseOutput as VercelAIPart);
     }
 
     default:
       // Check for custom types that we stored as generic parts
       if (part.type === "tool-approval-request" && "approvalId" in part && "toolCallId" in part) {
         const genericPart = part as unknown as Record<string, unknown>;
-        return {
+        return applyMode({
           type: "tool-approval-request",
           // biome-ignore lint/complexity/useLiteralKeys: required for TypeScript index signature access
           approvalId: String(genericPart["approvalId"]),
           // biome-ignore lint/complexity/useLiteralKeys: required for TypeScript index signature access
           toolCallId: String(genericPart["toolCallId"]),
-          ...extraFromMeta,
-        } as VercelAIPart;
+        } as VercelAIPart);
       }
       if (part.type === "tool-approval-response" && "approvalId" in part && "approved" in part) {
         const genericPart = part as unknown as Record<string, unknown>;
-        return {
+        return applyMode({
           type: "tool-approval-response",
           // biome-ignore lint/complexity/useLiteralKeys: required for TypeScript index signature access
           approvalId: String(genericPart["approvalId"]),
@@ -498,24 +524,29 @@ function genAIPartToVercelAI(part: GenAIPart, toolCallNameMap: Map<string, strin
           approved: Boolean(genericPart["approved"]),
           // biome-ignore lint/complexity/useLiteralKeys: required for TypeScript index signature access
           ...("reason" in part ? { reason: String(genericPart["reason"]) } : {}),
-          ...extraFromMeta,
-        } as VercelAIPart;
+        } as VercelAIPart);
       }
       // Generic part - convert to text if it has content
       if ("content" in part && typeof part.content === "string") {
-        return {
+        return applyMode({
           type: "text",
           text: part.content,
-          ...extraFromMeta,
-        } as VercelAIPart;
+        } as VercelAIPart);
       }
       return null;
   }
 }
 
 /** Convert a GenAI message to VercelAI messages. */
-function genAIMessageToVercelAI(message: GenAIMessage, toolCallNameMap: Map<string, string>): VercelAIMessage[] {
-  const vercelAIMeta = message._provider_metadata?.vercel_ai ?? {};
+function genAIMessageToVercelAI(
+  message: GenAIMessage,
+  toolCallNameMap: Map<string, string>,
+  mode: ProviderMetadataMode,
+): VercelAIMessage[] {
+  const msgMetadata = readMetadata(message as unknown as Record<string, unknown>);
+
+  // Helper to apply metadata mode to a message
+  const applyMode = <T extends object>(msg: T): T => applyMetadataMode(msg, msgMetadata, mode, true) as T;
 
   // Handle system messages
   if (message.role === "system") {
@@ -526,11 +557,10 @@ function genAIMessageToVercelAI(message: GenAIMessage, toolCallNameMap: Map<stri
       .join("\n");
 
     return [
-      {
+      applyMode({
         role: "system",
         content: textContent,
-        ...vercelAIMeta,
-      } as VercelAISystemMessage,
+      } as VercelAISystemMessage),
     ];
   }
 
@@ -539,7 +569,7 @@ function genAIMessageToVercelAI(message: GenAIMessage, toolCallNameMap: Map<stri
     const toolParts: VercelAIPart[] = [];
 
     for (const part of message.parts) {
-      const converted = genAIPartToVercelAI(part, toolCallNameMap);
+      const converted = genAIPartToVercelAI(part, toolCallNameMap, mode);
       if (converted && (converted.type === "tool-result" || converted.type === "tool-approval-response")) {
         toolParts.push(converted);
       }
@@ -550,11 +580,10 @@ function genAIMessageToVercelAI(message: GenAIMessage, toolCallNameMap: Map<stri
     }
 
     return [
-      {
+      applyMode({
         role: "tool",
         content: toolParts,
-        ...vercelAIMeta,
-      } as VercelAIToolMessage,
+      } as VercelAIToolMessage),
     ];
   }
 
@@ -563,7 +592,7 @@ function genAIMessageToVercelAI(message: GenAIMessage, toolCallNameMap: Map<stri
     const userParts: VercelAIPart[] = [];
 
     for (const part of message.parts) {
-      const converted = genAIPartToVercelAI(part, toolCallNameMap);
+      const converted = genAIPartToVercelAI(part, toolCallNameMap, mode);
       if (converted && (converted.type === "text" || converted.type === "image" || converted.type === "file")) {
         userParts.push(converted);
       }
@@ -572,20 +601,18 @@ function genAIMessageToVercelAI(message: GenAIMessage, toolCallNameMap: Map<stri
     // If only one text part, use string content
     if (userParts.length === 1 && userParts[0]?.type === "text") {
       return [
-        {
+        applyMode({
           role: "user",
           content: (userParts[0] as { text: string }).text,
-          ...vercelAIMeta,
-        } as VercelAIUserMessage,
+        } as VercelAIUserMessage),
       ];
     }
 
     return [
-      {
+      applyMode({
         role: "user",
         content: userParts,
-        ...vercelAIMeta,
-      } as VercelAIUserMessage,
+      } as VercelAIUserMessage),
     ];
   }
 
@@ -594,7 +621,7 @@ function genAIMessageToVercelAI(message: GenAIMessage, toolCallNameMap: Map<stri
     const assistantParts: VercelAIPart[] = [];
 
     for (const part of message.parts) {
-      const converted = genAIPartToVercelAI(part, toolCallNameMap);
+      const converted = genAIPartToVercelAI(part, toolCallNameMap, mode);
       if (converted) {
         assistantParts.push(converted);
       }
@@ -603,20 +630,18 @@ function genAIMessageToVercelAI(message: GenAIMessage, toolCallNameMap: Map<stri
     // If only one text part, use string content
     if (assistantParts.length === 1 && assistantParts[0]?.type === "text") {
       return [
-        {
+        applyMode({
           role: "assistant",
           content: (assistantParts[0] as { text: string }).text,
-          ...vercelAIMeta,
-        } as VercelAIAssistantMessage,
+        } as VercelAIAssistantMessage),
       ];
     }
 
     return [
-      {
+      applyMode({
         role: "assistant",
         content: assistantParts,
-        ...vercelAIMeta,
-      } as VercelAIAssistantMessage,
+      } as VercelAIAssistantMessage),
     ];
   }
 
@@ -627,11 +652,10 @@ function genAIMessageToVercelAI(message: GenAIMessage, toolCallNameMap: Map<stri
 
   if (textParts.length > 0) {
     return [
-      {
+      applyMode({
         role: "user",
         content: textParts,
-        ...vercelAIMeta,
-      } as VercelAIUserMessage,
+      } as VercelAIUserMessage),
     ];
   }
 

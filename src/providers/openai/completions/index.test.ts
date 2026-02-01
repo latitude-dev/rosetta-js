@@ -167,7 +167,7 @@ describe("OpenAICompletionsSpecification", () => {
           type: "uri",
           modality: "image",
           uri: "https://example.com/image.png",
-          _provider_metadata: { openai_completions: { detail: "high" } },
+          _provider_metadata: { detail: "high" },
         });
       });
 
@@ -208,7 +208,7 @@ describe("OpenAICompletionsSpecification", () => {
           modality: "audio",
           mime_type: "audio/mp3",
           content: "base64audiodata",
-          _provider_metadata: { openai_completions: { format: "mp3" } },
+          _provider_metadata: { format: "mp3" },
         });
       });
 
@@ -227,7 +227,7 @@ describe("OpenAICompletionsSpecification", () => {
           type: "file",
           modality: "document",
           file_id: "file-abc123",
-          _provider_metadata: { openai_completions: { filename: "document.pdf" } },
+          _provider_metadata: { filename: "document.pdf" },
         });
       });
 
@@ -246,7 +246,7 @@ describe("OpenAICompletionsSpecification", () => {
           type: "blob",
           modality: "document",
           content: "base64filedata",
-          _provider_metadata: { openai_completions: { filename: "data.txt" } },
+          _provider_metadata: { filename: "data.txt" },
         });
       });
 
@@ -304,11 +304,11 @@ describe("OpenAICompletionsSpecification", () => {
           direction: "output",
         });
 
-        // isRefusal is stored at root level for cross-provider access
+        // isRefusal is stored in _known_fields for cross-provider access
         expect(result.messages[0]?.parts[0]).toEqual({
           type: "text",
           content: "I cannot help with that.",
-          _provider_metadata: { isRefusal: true },
+          _provider_metadata: { _known_fields: { isRefusal: true } },
         });
       });
 
@@ -324,11 +324,11 @@ describe("OpenAICompletionsSpecification", () => {
           direction: "output",
         });
 
-        // isRefusal is stored at root level for cross-provider access
+        // isRefusal is stored in _known_fields for cross-provider access
         expect(result.messages[0]?.parts[0]).toEqual({
           type: "text",
           content: "I cannot assist with that request.",
-          _provider_metadata: { isRefusal: true },
+          _provider_metadata: { _known_fields: { isRefusal: true } },
         });
       });
 
@@ -467,7 +467,7 @@ describe("OpenAICompletionsSpecification", () => {
         });
 
         // biome-ignore lint/complexity/useLiteralKeys: TypeScript requires bracket notation for index signature access
-        expect(result.messages[0]?._provider_metadata?.openai_completions?.["annotations"]).toHaveLength(1);
+        expect(result.messages[0]?._provider_metadata?.["annotations"]).toHaveLength(1);
       });
 
       it("should convert audio response to blob", () => {
@@ -493,13 +493,11 @@ describe("OpenAICompletionsSpecification", () => {
           modality: "audio",
           content: "base64audiodata",
           _provider_metadata: {
-            openai_completions: {
-              audio: {
-                id: "audio_123",
-                expires_at: 1234567890,
-                data: "base64audiodata",
-                transcript: "Hello world",
-              },
+            audio: {
+              id: "audio_123",
+              expires_at: 1234567890,
+              data: "base64audiodata",
+              transcript: "Hello world",
             },
           },
         });
@@ -568,7 +566,7 @@ describe("OpenAICompletionsSpecification", () => {
           type: "tool_call_response",
           id: null,
           response: "Function result here",
-          _provider_metadata: { openai_completions: { name: "my_function" } },
+          _provider_metadata: { _known_fields: { toolName: "my_function" } },
         });
       });
 
@@ -698,7 +696,7 @@ describe("OpenAICompletionsSpecification", () => {
           direction: "input",
         });
 
-        expect(result.messages[0]?._provider_metadata?.openai_completions).toMatchObject({
+        expect(result.messages[0]?._provider_metadata).toMatchObject({
           unknown_field: "should be preserved",
           another_field: { nested: true },
         });
@@ -717,7 +715,7 @@ describe("OpenAICompletionsSpecification", () => {
           direction: "output",
         });
 
-        expect(result.messages[0]?._provider_metadata?.openai_completions).toMatchObject({
+        expect(result.messages[0]?._provider_metadata).toMatchObject({
           future_field: "new API field",
           metadata: { version: 2 },
         });
@@ -735,7 +733,7 @@ describe("OpenAICompletionsSpecification", () => {
           direction: "input",
         });
 
-        expect(result.messages[0]?._provider_metadata?.openai_completions).toMatchObject({
+        expect(result.messages[0]?._provider_metadata).toMatchObject({
           priority: "high",
         });
       });
@@ -754,7 +752,7 @@ describe("OpenAICompletionsSpecification", () => {
         });
 
         // Tool message extra fields are stored in the part's metadata
-        expect(result.messages[0]?.parts[0]?._provider_metadata?.openai_completions).toMatchObject({
+        expect(result.messages[0]?.parts[0]?._provider_metadata).toMatchObject({
           execution_time_ms: 150,
         });
       });
@@ -903,7 +901,7 @@ describe("OpenAICompletionsSpecification", () => {
           direction: "output",
         });
 
-        const metadata = result.messages[0]?._provider_metadata?.openai_completions;
+        const metadata = result.messages[0]?._provider_metadata;
         expect(metadata).toMatchObject({
           reasoning_content: "I thought about this carefully...",
           model_version: "gpt-5",
@@ -931,7 +929,7 @@ describe("OpenAICompletionsSpecification", () => {
           direction: "input",
         });
 
-        expect(result.messages[0]?.parts[0]?._provider_metadata?.openai_completions).toMatchObject({
+        expect(result.messages[0]?.parts[0]?._provider_metadata).toMatchObject({
           annotations: [{ type: "highlight" }],
           confidence: 0.95,
         });
@@ -959,7 +957,7 @@ describe("OpenAICompletionsSpecification", () => {
           direction: "input",
         });
 
-        expect(result.messages[0]?.parts[0]?._provider_metadata?.openai_completions).toMatchObject({
+        expect(result.messages[0]?.parts[0]?._provider_metadata).toMatchObject({
           detail: "high",
           alt_text: "An example image",
           source: "user_upload",
@@ -989,7 +987,7 @@ describe("OpenAICompletionsSpecification", () => {
           direction: "input",
         });
 
-        expect(result.messages[0]?.parts[0]?._provider_metadata?.openai_completions).toMatchObject({
+        expect(result.messages[0]?.parts[0]?._provider_metadata).toMatchObject({
           format: "mp3",
           sample_rate: 44100,
           channels: 2,
@@ -1019,7 +1017,7 @@ describe("OpenAICompletionsSpecification", () => {
           direction: "input",
         });
 
-        expect(result.messages[0]?.parts[0]?._provider_metadata?.openai_completions).toMatchObject({
+        expect(result.messages[0]?.parts[0]?._provider_metadata).toMatchObject({
           filename: "doc.pdf",
           mime_type: "application/pdf",
           size_bytes: 1024,
@@ -1049,7 +1047,7 @@ describe("OpenAICompletionsSpecification", () => {
           direction: "input",
         });
 
-        expect(result.messages[0]?.parts[0]?._provider_metadata?.openai_completions).toMatchObject({
+        expect(result.messages[0]?.parts[0]?._provider_metadata).toMatchObject({
           detail: "auto",
           dimensions: { width: 100, height: 100 },
           upload_id: "upload-xyz",

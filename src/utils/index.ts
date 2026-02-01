@@ -60,6 +60,145 @@ export function extractExtraFields<T extends object>(obj: T, knownKeys: (keyof T
 }
 
 /**
+ * Mode for handling provider metadata during translation.
+ * - "strip": No extra fields or metadata field in output. Known fields are still used internally.
+ * - "preserve" (default): Add metadata field to output entities. Fields stay inside the metadata field.
+ * - "passthrough": Spread all extra fields as direct properties on output entities.
+ */
+export type ProviderMetadataMode = "strip" | "preserve" | "passthrough";
+
+/**
+ * Known fields stored in `_known_fields` for building correct translations.
+ * These are used internally regardless of the metadata mode.
+ */
+export type KnownFields = {
+  /** Tool name for tool_call_response parts (GenAI schema doesn't include it) */
+  toolName?: string;
+  /** Error indicator for tool results or other error states */
+  isError?: boolean;
+  /** Refusal indicator for assistant refusal content */
+  isRefusal?: boolean;
+  /** Original type when mapping to a different GenAI type (for lossy conversions) */
+  originalType?: string;
+};
+
+/**
+ * Reads metadata from an entity, checking both casings (snake_case and camelCase).
+ * This is necessary because messages may have been previously translated by Rosetta
+ * with different target providers (GenAI uses snake_case, VercelAI uses camelCase).
+ */
+export function readMetadata(entity: Record<string, unknown>): Record<string, unknown> | undefined {
+  // biome-ignore lint/complexity/useLiteralKeys: required for index signature access
+  return (entity["_provider_metadata"] ?? entity["_providerMetadata"]) as Record<string, unknown> | undefined;
+}
+
+/**
+ * Extracts known fields from metadata, checking both casings.
+ * Returns an object with typed known fields for building correct translations.
+ */
+export function getKnownFields(metadata: Record<string, unknown> | undefined): KnownFields {
+  if (!metadata) return {};
+  // biome-ignore lint/complexity/useLiteralKeys: required for index signature access
+  const known = (metadata["_known_fields"] ?? metadata["_knownFields"]) as KnownFields | undefined;
+  return {
+    toolName: known?.toolName,
+    isError: known?.isError,
+    isRefusal: known?.isRefusal,
+    originalType: known?.originalType,
+  };
+}
+
+/**
+ * Stores metadata on a GenAI entity, merging with any existing metadata.
+ * This is used in toGenAI to build the _provider_metadata field.
+ *
+ * @param existingMetadata - Existing metadata from the entity (from readMetadata)
+ * @param extraFields - Extra fields from the source provider to preserve
+ * @param knownFields - Known fields for cross-provider translation
+ * @returns The merged metadata object, or undefined if empty
+ */
+export function storeMetadata(
+  existingMetadata: Record<string, unknown> | undefined,
+  extraFields: Record<string, unknown>,
+  knownFields: KnownFields,
+): Record<string, unknown> | undefined {
+  // Filter out undefined known fields
+  const validKnown = Object.fromEntries(Object.entries(knownFields).filter(([_, v]) => v !== undefined));
+  const hasKnown = Object.keys(validKnown).length > 0;
+  const hasExtra = Object.keys(extraFields).length > 0;
+
+  // Extract existing metadata, checking both casings
+  const { _known_fields, _knownFields, _provider_metadata, _providerMetadata, ...existingExtra } =
+    existingMetadata ?? {};
+  const existingKnown = (_known_fields ?? _knownFields) as Record<string, unknown> | undefined;
+  const hasExistingExtra = Object.keys(existingExtra).length > 0;
+  const hasExistingKnown = existingKnown && Object.keys(existingKnown).length > 0;
+
+  if (!hasKnown && !hasExtra && !hasExistingExtra && !hasExistingKnown) return undefined;
+
+  const merged: Record<string, unknown> = {
+    ...existingExtra, // Existing extra fields
+    ...extraFields, // New extra fields (may override)
+  };
+
+  // Merge known fields if any
+  if (hasKnown || hasExistingKnown) {
+    // biome-ignore lint/complexity/useLiteralKeys: required for index signature access
+    merged["_known_fields"] = { ...existingKnown, ...validKnown };
+  }
+
+  return Object.keys(merged).length > 0 ? merged : undefined;
+}
+
+/**
+ * Applies the metadata mode to an output entity during fromGenAI conversion.
+ *
+ * @param entity - The output entity being built
+ * @param metadata - The metadata from the GenAI entity
+ * @param mode - The metadata mode to apply
+ * @param useCamelCase - Whether to use camelCase for metadata field names (true for VercelAI/Promptl)
+ * @returns The entity with metadata applied according to the mode
+ */
+export function applyMetadataMode<T extends object>(
+  entity: T,
+  metadata: Record<string, unknown> | undefined,
+  mode: ProviderMetadataMode,
+  useCamelCase = true,
+): T {
+  if (!metadata) return entity;
+
+  switch (mode) {
+    case "strip":
+      // No extra fields, no metadata field
+      return entity;
+
+    case "preserve": {
+      // Add metadata field with target provider's casing
+      const metadataKey = useCamelCase ? "_providerMetadata" : "_provider_metadata";
+      const knownFieldsKey = useCamelCase ? "_knownFields" : "_known_fields";
+
+      // Normalize the known fields key in the metadata
+      const { _known_fields, _knownFields, ...rest } = metadata;
+      const knownFields = _known_fields ?? _knownFields;
+      const hasKnownFields = knownFields && Object.keys(knownFields as object).length > 0;
+      const normalizedMetadata = hasKnownFields ? { ...rest, [knownFieldsKey]: knownFields } : rest;
+
+      // Only add metadata field if there's something to store
+      if (Object.keys(normalizedMetadata).length === 0) return entity;
+      return { ...entity, [metadataKey]: normalizedMetadata };
+    }
+
+    case "passthrough": {
+      // Spread all fields EXCEPT known fields (either casing)
+      const { _known_fields, _knownFields, ...extraFields } = metadata;
+      // Only spread if there are extra fields
+      if (Object.keys(extraFields).length === 0) return entity;
+      return { ...entity, ...extraFields };
+    }
+  }
+}
+
+/**
  * Checks if a string looks like a URL (http://, https://, or data: URI).
  */
 export function isUrlString(value: string): boolean {
@@ -166,57 +305,24 @@ export function parseJsonIfString(value: unknown): unknown {
 }
 
 /**
- * Shared metadata fields that can be read by any provider (cross-provider semantic data).
- * These are stored at the root level of `_provider_metadata`.
- */
-export type SharedMetadataFields = {
-  toolName?: string;
-  isError?: boolean;
-  isRefusal?: boolean;
-  originalType?: string;
-};
-
-/** Type for GenAI parts (used by withMetadata) */
-type PartWithMetadata = {
-  type: string;
-  _provider_metadata?: Record<string, unknown>;
-  [key: string]: unknown;
-};
-
-/**
  * Adds provider metadata to a GenAI part if there's any data to store.
+ * This is a simpler helper for source-only providers that just need to store extra fields and known fields.
  *
  * @param part - The GenAI part to add metadata to
- * @param providerKey - The provider's slot key (e.g., "anthropic", "openai_completions")
- * @param providerMetadata - Provider-specific metadata for same-provider round-trips
- * @param sharedFields - Cross-provider semantic data stored at root level
+ * @param extraFields - Extra fields from the source to preserve
+ * @param knownFields - Known fields for cross-provider translation
  * @returns The part with `_provider_metadata` added, or the original part if no metadata
- *
- * @example
- * // Add both shared and provider-specific metadata
- * withMetadata(part, "anthropic", { cache_control: { type: "ephemeral" } }, { isError: true });
- *
- * // Add only shared metadata
- * withMetadata(part, "openai_completions", {}, { isRefusal: true });
- *
- * // Add only provider-specific metadata
- * withMetadata(part, "google", { extra_field: "value" });
  */
-export function withMetadata<T extends PartWithMetadata>(
+export function withMetadata<T extends { type: string; _provider_metadata?: Record<string, unknown> }>(
   part: T,
-  providerKey: string,
-  providerMetadata: Record<string, unknown>,
-  sharedFields?: SharedMetadataFields,
+  extraFields: Record<string, unknown>,
+  knownFields?: KnownFields,
 ): T {
-  const hasProviderMetadata = Object.keys(providerMetadata).length > 0;
-  const hasShared = sharedFields && Object.keys(sharedFields).length > 0;
-  if (!hasProviderMetadata && !hasShared) return part;
-
-  return {
-    ...part,
-    _provider_metadata: {
-      ...(hasShared ? sharedFields : {}),
-      ...(hasProviderMetadata ? { [providerKey]: providerMetadata } : {}),
-    },
-  };
+  const metadata = storeMetadata(
+    readMetadata(part as unknown as Record<string, unknown>),
+    extraFields,
+    knownFields ?? {},
+  );
+  if (!metadata) return part;
+  return { ...part, _provider_metadata: metadata };
 }

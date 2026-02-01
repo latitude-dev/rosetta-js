@@ -8,20 +8,14 @@
 import type { z } from "zod";
 import type { GenAIMessage, GenAISystem } from "$package/core/genai";
 import type { InputMessages, InputSystem } from "$package/core/input";
-import type { AnthropicMetadata } from "$package/providers/anthropic/metadata";
 import type { AnthropicMessage, AnthropicSystem } from "$package/providers/anthropic/schema";
-import type { CompatMetadata } from "$package/providers/compat/metadata";
 import type { CompatMessage, CompatSystem } from "$package/providers/compat/schema";
-import type { GoogleMetadata } from "$package/providers/google/metadata";
 import type { GoogleContent, GoogleSystem } from "$package/providers/google/schema";
-import type { OpenAICompletionsMetadata } from "$package/providers/openai/completions/metadata";
 import type { OpenAICompletionsMessage } from "$package/providers/openai/completions/schema";
-import type { OpenAIResponsesMetadata } from "$package/providers/openai/responses/metadata";
 import type { OpenAIResponsesItem } from "$package/providers/openai/responses/schema";
-import type { PromptlMetadata } from "$package/providers/promptl/metadata";
 import type { PromptlMessage } from "$package/providers/promptl/schema";
-import type { VercelAIMetadata } from "$package/providers/vercelai/metadata";
 import type { VercelAIMessage } from "$package/providers/vercelai/schema";
+import type { ProviderMetadataMode } from "$package/utils";
 
 /** Enum of all supported providers. */
 export enum Provider {
@@ -68,22 +62,6 @@ export type ProviderSystem<P extends Provider> =
   never;
 
 /**
- * Maps each Provider to its metadata type.
- * Each provider can store arbitrary metadata in its designated field.
- */
-// biome-ignore format: preserve conditional type formatting for readability
-export type ProviderMetadata<P extends Provider> =
-  P extends Provider.GenAI ? never :
-  P extends Provider.Promptl ? PromptlMetadata :
-  P extends Provider.OpenAICompletions ? OpenAICompletionsMetadata :
-  P extends Provider.OpenAIResponses ? OpenAIResponsesMetadata :
-  P extends Provider.Anthropic ? AnthropicMetadata :
-  P extends Provider.Google ? GoogleMetadata :
-  P extends Provider.VercelAI ? VercelAIMetadata :
-  P extends Provider.Compat ? CompatMetadata :
-  never;
-
-/**
  * Arguments for converting provider messages TO GenAI format.
  *
  * @property messages - The input messages to convert (string or array of provider messages).
@@ -101,10 +79,12 @@ export type ProviderToGenAIArgs = {
  *
  * @property messages - The input messages in GenAI format.
  * @property direction - Whether converting for "input" (user → assistant) or "output" (assistant → user).
+ * @property providerMetadata - How to handle provider metadata in the output.
  */
 export type ProviderFromGenAIArgs = {
   messages: GenAIMessage[];
   direction: "input" | "output";
+  providerMetadata: ProviderMetadataMode;
 };
 
 /**

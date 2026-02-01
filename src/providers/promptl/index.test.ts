@@ -88,7 +88,7 @@ describe("PromptlSpecification", () => {
         const result = PromptlSpecification.toGenAI({ messages, direction: "input" });
 
         // biome-ignore lint/complexity/useLiteralKeys: required for TypeScript index signature access
-        expect(result.messages[0]?.parts[0]?._provider_metadata?.promptl?.["_promptlSourceMap"]).toEqual(sourceMap);
+        expect(result.messages[0]?.parts[0]?._provider_metadata?.["_promptlSourceMap"]).toEqual(sourceMap);
       });
     });
 
@@ -283,7 +283,7 @@ describe("PromptlSpecification", () => {
 
         const result = PromptlSpecification.toGenAI({ messages, direction: "output" });
 
-        expect(result.messages[0]?.parts[0]?._provider_metadata?.promptl).toMatchObject({
+        expect(result.messages[0]?.parts[0]?._provider_metadata).toMatchObject({
           id: "reasoning-1",
           isStreaming: true,
         });
@@ -301,12 +301,12 @@ describe("PromptlSpecification", () => {
 
         const result = PromptlSpecification.toGenAI({ messages, direction: "output" });
 
-        // Should be mapped to reasoning (closest GenAI equivalent) with originalType at root level
+        // Should be mapped to reasoning (closest GenAI equivalent) with originalType in _known_fields
         expect(result.messages[0]?.parts[0]).toEqual({
           type: "reasoning",
           content: "encrypted-data-here",
           _provider_metadata: {
-            originalType: "redacted-reasoning",
+            _known_fields: { originalType: "redacted-reasoning" },
           },
         });
       });
@@ -403,7 +403,7 @@ describe("PromptlSpecification", () => {
         const result = PromptlSpecification.toGenAI({ messages, direction: "output" });
 
         // biome-ignore lint/complexity/useLiteralKeys: required for TypeScript index signature access
-        expect(result.messages[0]?.parts[0]?._provider_metadata?.promptl?.["_sourceData"]).toEqual({
+        expect(result.messages[0]?.parts[0]?._provider_metadata?.["_sourceData"]).toEqual({
           line: 10,
           file: "test.ts",
         });
@@ -435,8 +435,11 @@ describe("PromptlSpecification", () => {
           temp: 22,
           condition: "sunny",
         });
-        // toolName is stored at root level for cross-provider access
-        expect(result.messages[0]?.parts[0]?._provider_metadata?.toolName).toBe("get_weather");
+        // toolName is stored in _known_fields for cross-provider access
+        expect(
+          // biome-ignore lint/complexity/useLiteralKeys: required for index signature access
+          (result.messages[0]?.parts[0]?._provider_metadata?._known_fields as Record<string, unknown>)?.["toolName"],
+        ).toBe("get_weather");
       });
 
       it("should preserve isError in tool-result metadata", () => {
@@ -457,8 +460,11 @@ describe("PromptlSpecification", () => {
 
         const result = PromptlSpecification.toGenAI({ messages, direction: "input" });
 
-        // isError is stored at root level for cross-provider access
-        expect(result.messages[0]?.parts[0]?._provider_metadata?.isError).toBe(true);
+        // isError is stored in _known_fields for cross-provider access
+        expect(
+          // biome-ignore lint/complexity/useLiteralKeys: required for index signature access
+          (result.messages[0]?.parts[0]?._provider_metadata?._known_fields as Record<string, unknown>)?.["isError"],
+        ).toBe(true);
       });
     });
 
@@ -480,8 +486,11 @@ describe("PromptlSpecification", () => {
         expect(result.messages[0]?.parts[0]?.type).toBe("tool_call_response");
         expect((result.messages[0]?.parts[0] as { id: string }).id).toBe("call-123");
         expect((result.messages[0]?.parts[0] as { response: unknown }).response).toBe("Sunny, 22°C");
-        // toolName is stored at root level for cross-provider access
-        expect(result.messages[0]?.parts[0]?._provider_metadata?.toolName).toBe("get_weather");
+        // toolName is stored in _known_fields for cross-provider access
+        expect(
+          // biome-ignore lint/complexity/useLiteralKeys: required for index signature access
+          (result.messages[0]?.parts[0]?._provider_metadata?._known_fields as Record<string, unknown>)?.["toolName"],
+        ).toBe("get_weather");
       });
 
       it("should convert legacy tool message with multiple content parts to array response", () => {
@@ -558,7 +567,7 @@ describe("PromptlSpecification", () => {
         const result = PromptlSpecification.toGenAI({ messages, direction: "output" });
 
         // biome-ignore lint/complexity/useLiteralKeys: required for TypeScript index signature access
-        expect(result.messages[0]?.parts[0]?._provider_metadata?.promptl?.["_sourceData"]).toEqual({ line: 5 });
+        expect(result.messages[0]?.parts[0]?._provider_metadata?.["_sourceData"]).toEqual({ line: 5 });
       });
 
       it("should deduplicate tool calls when same id appears in both content and toolCalls", () => {
@@ -621,7 +630,7 @@ describe("PromptlSpecification", () => {
         const result = PromptlSpecification.toGenAI({ messages, direction: "input" });
 
         // biome-ignore lint/complexity/useLiteralKeys: TypeScript requires bracket notation for index signature access
-        expect(result.messages[0]?._provider_metadata?.promptl?.["customField"]).toBe("custom value");
+        expect(result.messages[0]?._provider_metadata?.["customField"]).toBe("custom value");
       });
 
       it("should preserve extra content fields in part metadata", () => {
@@ -635,7 +644,7 @@ describe("PromptlSpecification", () => {
         const result = PromptlSpecification.toGenAI({ messages, direction: "input" });
 
         // biome-ignore lint/complexity/useLiteralKeys: TypeScript requires bracket notation for index signature access
-        expect(result.messages[0]?.parts[0]?._provider_metadata?.promptl?.["customProp"]).toBe(123);
+        expect(result.messages[0]?.parts[0]?._provider_metadata?.["customProp"]).toBe(123);
       });
     });
 
@@ -680,7 +689,7 @@ describe("PromptlSpecification", () => {
       it("should convert GenAI text part to Promptl text content", () => {
         const messages: GenAIMessage[] = [{ role: "user", parts: [{ type: "text", content: "Hello" }] }];
 
-        const result = PromptlSpecification.fromGenAI({ messages, direction: "output" });
+        const result = PromptlSpecification.fromGenAI({ messages, direction: "output", providerMetadata: "strip" });
 
         expect(result.messages).toHaveLength(1);
         expect(result.messages[0]?.role).toBe("user");
@@ -692,13 +701,16 @@ describe("PromptlSpecification", () => {
         const messages: GenAIMessage[] = [
           {
             role: "user",
-            parts: [
-              { type: "text", content: "Hello", _provider_metadata: { promptl: { _promptlSourceMap: sourceMap } } },
-            ],
+            parts: [{ type: "text", content: "Hello", _provider_metadata: { _promptlSourceMap: sourceMap } }],
           },
         ];
 
-        const result = PromptlSpecification.fromGenAI({ messages, direction: "output" });
+        // Use passthrough mode to spread extra fields on output content
+        const result = PromptlSpecification.fromGenAI({
+          messages,
+          direction: "output",
+          providerMetadata: "passthrough",
+        });
 
         expect((result.messages[0]?.content[0] as { _promptlSourceMap?: unknown })._promptlSourceMap).toEqual(
           sourceMap,
@@ -710,7 +722,7 @@ describe("PromptlSpecification", () => {
       it("should convert system role", () => {
         const messages: GenAIMessage[] = [{ role: "system", parts: [{ type: "text", content: "Be helpful" }] }];
 
-        const result = PromptlSpecification.fromGenAI({ messages, direction: "output" });
+        const result = PromptlSpecification.fromGenAI({ messages, direction: "output", providerMetadata: "strip" });
 
         expect(result.messages[0]?.role).toBe("system");
       });
@@ -723,7 +735,7 @@ describe("PromptlSpecification", () => {
           },
         ];
 
-        const result = PromptlSpecification.fromGenAI({ messages, direction: "output" });
+        const result = PromptlSpecification.fromGenAI({ messages, direction: "output", providerMetadata: "strip" });
 
         expect(result.messages[0]?.role).toBe("developer");
       });
@@ -731,7 +743,7 @@ describe("PromptlSpecification", () => {
       it("should convert user role with name", () => {
         const messages: GenAIMessage[] = [{ role: "user", parts: [{ type: "text", content: "Hi" }], name: "Bob" }];
 
-        const result = PromptlSpecification.fromGenAI({ messages, direction: "output" });
+        const result = PromptlSpecification.fromGenAI({ messages, direction: "output", providerMetadata: "strip" });
 
         expect(result.messages[0]?.role).toBe("user");
         expect((result.messages[0] as { name?: string }).name).toBe("Bob");
@@ -740,7 +752,7 @@ describe("PromptlSpecification", () => {
       it("should convert assistant role", () => {
         const messages: GenAIMessage[] = [{ role: "assistant", parts: [{ type: "text", content: "Hello!" }] }];
 
-        const result = PromptlSpecification.fromGenAI({ messages, direction: "output" });
+        const result = PromptlSpecification.fromGenAI({ messages, direction: "output", providerMetadata: "strip" });
 
         expect(result.messages[0]?.role).toBe("assistant");
       });
@@ -748,7 +760,7 @@ describe("PromptlSpecification", () => {
       it("should default unknown roles to user", () => {
         const messages: GenAIMessage[] = [{ role: "custom_role", parts: [{ type: "text", content: "Hello" }] }];
 
-        const result = PromptlSpecification.fromGenAI({ messages, direction: "output" });
+        const result = PromptlSpecification.fromGenAI({ messages, direction: "output", providerMetadata: "strip" });
 
         expect(result.messages[0]?.role).toBe("user");
       });
@@ -763,7 +775,7 @@ describe("PromptlSpecification", () => {
           },
         ];
 
-        const result = PromptlSpecification.fromGenAI({ messages, direction: "output" });
+        const result = PromptlSpecification.fromGenAI({ messages, direction: "output", providerMetadata: "strip" });
 
         expect(result.messages[0]?.content[0]).toEqual({ type: "image", image: "SGVsbG8=" });
       });
@@ -776,7 +788,7 @@ describe("PromptlSpecification", () => {
           },
         ];
 
-        const result = PromptlSpecification.fromGenAI({ messages, direction: "output" });
+        const result = PromptlSpecification.fromGenAI({ messages, direction: "output", providerMetadata: "strip" });
 
         expect(result.messages[0]?.content[0]).toEqual({
           type: "file",
@@ -793,7 +805,7 @@ describe("PromptlSpecification", () => {
           },
         ];
 
-        const result = PromptlSpecification.fromGenAI({ messages, direction: "output" });
+        const result = PromptlSpecification.fromGenAI({ messages, direction: "output", providerMetadata: "strip" });
 
         expect((result.messages[0]?.content[0] as { mimeType?: string }).mimeType).toBe("application/video");
       });
@@ -808,7 +820,7 @@ describe("PromptlSpecification", () => {
           },
         ];
 
-        const result = PromptlSpecification.fromGenAI({ messages, direction: "output" });
+        const result = PromptlSpecification.fromGenAI({ messages, direction: "output", providerMetadata: "strip" });
 
         expect(result.messages[0]?.content[0]).toEqual({
           type: "image",
@@ -826,7 +838,7 @@ describe("PromptlSpecification", () => {
           },
         ];
 
-        const result = PromptlSpecification.fromGenAI({ messages, direction: "output" });
+        const result = PromptlSpecification.fromGenAI({ messages, direction: "output", providerMetadata: "strip" });
 
         expect(result.messages[0]?.content[0]).toEqual({
           type: "file",
@@ -845,7 +857,7 @@ describe("PromptlSpecification", () => {
           },
         ];
 
-        const result = PromptlSpecification.fromGenAI({ messages, direction: "output" });
+        const result = PromptlSpecification.fromGenAI({ messages, direction: "output", providerMetadata: "strip" });
 
         expect(result.messages[0]?.content[0]).toEqual({
           type: "file",
@@ -864,7 +876,7 @@ describe("PromptlSpecification", () => {
           },
         ];
 
-        const result = PromptlSpecification.fromGenAI({ messages, direction: "output" });
+        const result = PromptlSpecification.fromGenAI({ messages, direction: "output", providerMetadata: "strip" });
 
         expect(result.messages[0]?.content[0]).toEqual({
           type: "tool-call",
@@ -883,7 +895,7 @@ describe("PromptlSpecification", () => {
           },
         ];
 
-        const result = PromptlSpecification.fromGenAI({ messages, direction: "output" });
+        const result = PromptlSpecification.fromGenAI({ messages, direction: "output", providerMetadata: "strip" });
 
         expect((result.messages[0]?.content[0] as { toolCallId: string }).toolCallId).toBe("");
       });
@@ -896,7 +908,7 @@ describe("PromptlSpecification", () => {
           },
         ];
 
-        const result = PromptlSpecification.fromGenAI({ messages, direction: "output" });
+        const result = PromptlSpecification.fromGenAI({ messages, direction: "output", providerMetadata: "strip" });
 
         expect((result.messages[0]?.content[0] as { args: unknown }).args).toEqual({});
         expect((result.messages[0]?.content[0] as { toolArguments: unknown }).toolArguments).toEqual({});
@@ -912,7 +924,7 @@ describe("PromptlSpecification", () => {
           },
         ];
 
-        const result = PromptlSpecification.fromGenAI({ messages, direction: "output" });
+        const result = PromptlSpecification.fromGenAI({ messages, direction: "output", providerMetadata: "strip" });
 
         expect(result.messages[0]?.content[0]).toEqual({
           type: "reasoning",
@@ -928,13 +940,18 @@ describe("PromptlSpecification", () => {
               {
                 type: "reasoning",
                 content: "Thinking...",
-                _provider_metadata: { promptl: { id: "r-1", isStreaming: false } },
+                _provider_metadata: { id: "r-1", isStreaming: false },
               },
             ],
           },
         ];
 
-        const result = PromptlSpecification.fromGenAI({ messages, direction: "output" });
+        // Use passthrough mode to spread extra fields on output content
+        const result = PromptlSpecification.fromGenAI({
+          messages,
+          direction: "output",
+          providerMetadata: "passthrough",
+        });
 
         expect((result.messages[0]?.content[0] as { id?: string }).id).toBe("r-1");
         expect((result.messages[0]?.content[0] as { isStreaming?: boolean }).isStreaming).toBe(false);
@@ -951,15 +968,15 @@ describe("PromptlSpecification", () => {
                 type: "reasoning",
                 content: "encrypted-data",
                 _provider_metadata: {
-                  // originalType is now at root level
-                  originalType: "redacted-reasoning",
+                  // originalType is in _known_fields
+                  _known_fields: { originalType: "redacted-reasoning" },
                 },
               },
             ],
           },
         ];
 
-        const result = PromptlSpecification.fromGenAI({ messages, direction: "output" });
+        const result = PromptlSpecification.fromGenAI({ messages, direction: "output", providerMetadata: "strip" });
 
         // Should restore the original redacted-reasoning type
         expect(result.messages[0]?.content[0]).toEqual({
@@ -976,7 +993,7 @@ describe("PromptlSpecification", () => {
           },
         ];
 
-        const result = PromptlSpecification.fromGenAI({ messages, direction: "output" });
+        const result = PromptlSpecification.fromGenAI({ messages, direction: "output", providerMetadata: "strip" });
 
         expect(result.messages[0]?.content[0]).toEqual({
           type: "reasoning",
@@ -995,13 +1012,13 @@ describe("PromptlSpecification", () => {
                 type: "tool_call_response",
                 id: "call-123",
                 response: "Success!",
-                _provider_metadata: { promptl: { toolName: "my_tool" } },
+                _provider_metadata: { _known_fields: { toolName: "my_tool" } },
               },
             ],
           },
         ];
 
-        const result = PromptlSpecification.fromGenAI({ messages, direction: "output" });
+        const result = PromptlSpecification.fromGenAI({ messages, direction: "output", providerMetadata: "strip" });
 
         expect(result.messages).toHaveLength(1);
         expect(result.messages[0]?.role).toBe("tool");
@@ -1019,19 +1036,19 @@ describe("PromptlSpecification", () => {
                 type: "tool_call_response",
                 id: "call-1",
                 response: "Result 1",
-                _provider_metadata: { promptl: { toolName: "tool_a" } },
+                _provider_metadata: { _known_fields: { toolName: "tool_a" } },
               },
               {
                 type: "tool_call_response",
                 id: "call-2",
                 response: "Result 2",
-                _provider_metadata: { promptl: { toolName: "tool_b" } },
+                _provider_metadata: { _known_fields: { toolName: "tool_b" } },
               },
             ],
           },
         ];
 
-        const result = PromptlSpecification.fromGenAI({ messages, direction: "output" });
+        const result = PromptlSpecification.fromGenAI({ messages, direction: "output", providerMetadata: "strip" });
 
         expect(result.messages).toHaveLength(2);
         expect((result.messages[0] as { toolName: string }).toolName).toBe("tool_a");
@@ -1051,13 +1068,13 @@ describe("PromptlSpecification", () => {
                 type: "tool_call_response",
                 id: "call-x",
                 response: arrayResponse,
-                _provider_metadata: { promptl: { toolName: "multi_part" } },
+                _provider_metadata: { _known_fields: { toolName: "multi_part" } },
               },
             ],
           },
         ];
 
-        const result = PromptlSpecification.fromGenAI({ messages, direction: "output" });
+        const result = PromptlSpecification.fromGenAI({ messages, direction: "output", providerMetadata: "strip" });
 
         expect(result.messages[0]?.content).toHaveLength(2);
         expect(result.messages[0]?.content[0]).toEqual({ type: "text", text: "Part 1" });
@@ -1073,13 +1090,13 @@ describe("PromptlSpecification", () => {
                 type: "tool_call_response",
                 id: "call-obj",
                 response: { status: "ok", count: 5 },
-                _provider_metadata: { promptl: { toolName: "json_tool" } },
+                _provider_metadata: { _known_fields: { toolName: "json_tool" } },
               },
             ],
           },
         ];
 
-        const result = PromptlSpecification.fromGenAI({ messages, direction: "output" });
+        const result = PromptlSpecification.fromGenAI({ messages, direction: "output", providerMetadata: "strip" });
 
         const content = result.messages[0]?.content as Array<{ type: string; text: string }>;
         expect(content[0]?.type).toBe("text");
@@ -1094,7 +1111,7 @@ describe("PromptlSpecification", () => {
           },
         ];
 
-        const result = PromptlSpecification.fromGenAI({ messages, direction: "output" });
+        const result = PromptlSpecification.fromGenAI({ messages, direction: "output", providerMetadata: "strip" });
 
         expect((result.messages[0] as { toolName: string }).toolName).toBe("unknown");
       });
@@ -1111,7 +1128,7 @@ describe("PromptlSpecification", () => {
           },
         ];
 
-        const result = PromptlSpecification.fromGenAI({ messages, direction: "output" });
+        const result = PromptlSpecification.fromGenAI({ messages, direction: "output", providerMetadata: "strip" });
 
         expect(result.messages).toHaveLength(2);
         expect((result.messages[1] as { toolName: string }).toolName).toBe("get_weather");
@@ -1135,7 +1152,7 @@ describe("PromptlSpecification", () => {
           },
         ];
 
-        const result = PromptlSpecification.fromGenAI({ messages, direction: "output" });
+        const result = PromptlSpecification.fromGenAI({ messages, direction: "output", providerMetadata: "strip" });
 
         // First message is the assistant with tool calls
         expect(result.messages[0]?.role).toBe("assistant");
@@ -1157,13 +1174,13 @@ describe("PromptlSpecification", () => {
                 type: "tool_call_response",
                 id: "call-abc",
                 response: "result",
-                _provider_metadata: { promptl: { toolName: "metadata_name" } },
+                _provider_metadata: { _known_fields: { toolName: "metadata_name" } },
               },
             ],
           },
         ];
 
-        const result = PromptlSpecification.fromGenAI({ messages, direction: "output" });
+        const result = PromptlSpecification.fromGenAI({ messages, direction: "output", providerMetadata: "strip" });
 
         // Metadata takes precedence
         expect((result.messages[1] as { toolName: string }).toolName).toBe("metadata_name");
@@ -1182,7 +1199,7 @@ describe("PromptlSpecification", () => {
           },
         ];
 
-        const result = PromptlSpecification.fromGenAI({ messages, direction: "output" });
+        const result = PromptlSpecification.fromGenAI({ messages, direction: "output", providerMetadata: "strip" });
 
         // Should still find the tool name because we scan all messages first
         expect((result.messages[0] as { toolName: string }).toolName).toBe("late_tool");
@@ -1198,7 +1215,7 @@ describe("PromptlSpecification", () => {
           },
         ];
 
-        const result = PromptlSpecification.fromGenAI({ messages, direction: "output" });
+        const result = PromptlSpecification.fromGenAI({ messages, direction: "output", providerMetadata: "strip" });
 
         const content = result.messages[0]?.content as Array<{ type: string; text: string; _genericType?: string }>;
         expect(content[0]?.type).toBe("text");
@@ -1217,7 +1234,7 @@ describe("PromptlSpecification", () => {
           },
         ];
 
-        const result = PromptlSpecification.fromGenAI({ messages, direction: "output" });
+        const result = PromptlSpecification.fromGenAI({ messages, direction: "output", providerMetadata: "strip" });
 
         const content = result.messages[0]?.content as Array<{ type: string }>;
         expect(content).toHaveLength(1);
@@ -1231,11 +1248,16 @@ describe("PromptlSpecification", () => {
           {
             role: "user",
             parts: [{ type: "text", content: "Hello" }],
-            _provider_metadata: { promptl: { customField: "restored" } },
+            _provider_metadata: { customField: "restored" },
           },
         ];
 
-        const result = PromptlSpecification.fromGenAI({ messages, direction: "output" });
+        // Use passthrough mode to spread extra fields on output message
+        const result = PromptlSpecification.fromGenAI({
+          messages,
+          direction: "output",
+          providerMetadata: "passthrough",
+        });
 
         expect((result.messages[0] as { customField?: string }).customField).toBe("restored");
       });
@@ -1244,11 +1266,16 @@ describe("PromptlSpecification", () => {
         const messages: GenAIMessage[] = [
           {
             role: "user",
-            parts: [{ type: "text", content: "Hello", _provider_metadata: { promptl: { extraProp: 42 } } }],
+            parts: [{ type: "text", content: "Hello", _provider_metadata: { extraProp: 42 } }],
           },
         ];
 
-        const result = PromptlSpecification.fromGenAI({ messages, direction: "output" });
+        // Use passthrough mode to spread extra fields on output content
+        const result = PromptlSpecification.fromGenAI({
+          messages,
+          direction: "output",
+          providerMetadata: "passthrough",
+        });
 
         expect((result.messages[0]?.content[0] as { extraProp?: number }).extraProp).toBe(42);
       });
@@ -1262,7 +1289,7 @@ describe("PromptlSpecification", () => {
           { role: "assistant", parts: [{ type: "text", content: "Assistant" }] },
         ];
 
-        const result = PromptlSpecification.fromGenAI({ messages, direction: "output" });
+        const result = PromptlSpecification.fromGenAI({ messages, direction: "output", providerMetadata: "strip" });
 
         expect(result.messages).toHaveLength(3);
         expect(result.messages[0]?.role).toBe("system");
@@ -1281,7 +1308,7 @@ describe("PromptlSpecification", () => {
           },
         ];
 
-        const result = PromptlSpecification.fromGenAI({ messages, direction: "output" });
+        const result = PromptlSpecification.fromGenAI({ messages, direction: "output", providerMetadata: "strip" });
 
         const content = result.messages[0]?.content as Array<{ type: string }>;
         expect(content).toHaveLength(2);
@@ -1296,7 +1323,11 @@ describe("PromptlSpecification", () => {
       const original: PromptlMessage[] = [{ role: "user", content: [{ type: "text", text: "Hello, world!" }] }];
 
       const genAI = PromptlSpecification.toGenAI({ messages: original, direction: "input" });
-      const restored = PromptlSpecification.fromGenAI({ messages: genAI.messages, direction: "output" });
+      const restored = PromptlSpecification.fromGenAI({
+        messages: genAI.messages,
+        direction: "output",
+        providerMetadata: "passthrough",
+      });
 
       expect(restored.messages).toEqual(original);
     });
@@ -1305,7 +1336,11 @@ describe("PromptlSpecification", () => {
       const original: PromptlMessage[] = [{ role: "assistant", content: [{ type: "text", text: "I can help!" }] }];
 
       const genAI = PromptlSpecification.toGenAI({ messages: original, direction: "output" });
-      const restored = PromptlSpecification.fromGenAI({ messages: genAI.messages, direction: "output" });
+      const restored = PromptlSpecification.fromGenAI({
+        messages: genAI.messages,
+        direction: "output",
+        providerMetadata: "passthrough",
+      });
 
       expect(restored.messages).toEqual(original);
     });
@@ -1314,7 +1349,11 @@ describe("PromptlSpecification", () => {
       const original: PromptlMessage[] = [{ role: "system", content: [{ type: "text", text: "Be helpful" }] }];
 
       const genAI = PromptlSpecification.toGenAI({ messages: original, direction: "input" });
-      const restored = PromptlSpecification.fromGenAI({ messages: genAI.messages, direction: "output" });
+      const restored = PromptlSpecification.fromGenAI({
+        messages: genAI.messages,
+        direction: "output",
+        providerMetadata: "passthrough",
+      });
 
       expect(restored.messages).toEqual(original);
     });
@@ -1325,7 +1364,11 @@ describe("PromptlSpecification", () => {
       ];
 
       const genAI = PromptlSpecification.toGenAI({ messages: original, direction: "input" });
-      const restored = PromptlSpecification.fromGenAI({ messages: genAI.messages, direction: "output" });
+      const restored = PromptlSpecification.fromGenAI({
+        messages: genAI.messages,
+        direction: "output",
+        providerMetadata: "passthrough",
+      });
 
       expect(restored.messages).toEqual(original);
     });
@@ -1334,7 +1377,11 @@ describe("PromptlSpecification", () => {
       const original: PromptlMessage[] = [{ role: "user", name: "Alice", content: [{ type: "text", text: "Hi" }] }];
 
       const genAI = PromptlSpecification.toGenAI({ messages: original, direction: "input" });
-      const restored = PromptlSpecification.fromGenAI({ messages: genAI.messages, direction: "output" });
+      const restored = PromptlSpecification.fromGenAI({
+        messages: genAI.messages,
+        direction: "output",
+        providerMetadata: "passthrough",
+      });
 
       expect(restored.messages).toEqual(original);
     });
@@ -1345,7 +1392,11 @@ describe("PromptlSpecification", () => {
       ];
 
       const genAI = PromptlSpecification.toGenAI({ messages: original, direction: "input" });
-      const restored = PromptlSpecification.fromGenAI({ messages: genAI.messages, direction: "output" });
+      const restored = PromptlSpecification.fromGenAI({
+        messages: genAI.messages,
+        direction: "output",
+        providerMetadata: "passthrough",
+      });
 
       expect(restored.messages).toEqual(original);
     });
@@ -1354,7 +1405,11 @@ describe("PromptlSpecification", () => {
       const original: PromptlMessage[] = [{ role: "user", content: [{ type: "image", image: "SGVsbG8gV29ybGQ=" }] }];
 
       const genAI = PromptlSpecification.toGenAI({ messages: original, direction: "input" });
-      const restored = PromptlSpecification.fromGenAI({ messages: genAI.messages, direction: "output" });
+      const restored = PromptlSpecification.fromGenAI({
+        messages: genAI.messages,
+        direction: "output",
+        providerMetadata: "passthrough",
+      });
 
       expect(restored.messages).toEqual(original);
     });
@@ -1365,7 +1420,11 @@ describe("PromptlSpecification", () => {
       ];
 
       const genAI = PromptlSpecification.toGenAI({ messages: original, direction: "input" });
-      const restored = PromptlSpecification.fromGenAI({ messages: genAI.messages, direction: "output" });
+      const restored = PromptlSpecification.fromGenAI({
+        messages: genAI.messages,
+        direction: "output",
+        providerMetadata: "passthrough",
+      });
 
       expect(restored.messages).toEqual(original);
     });
@@ -1379,7 +1438,11 @@ describe("PromptlSpecification", () => {
       ];
 
       const genAI = PromptlSpecification.toGenAI({ messages: original, direction: "output" });
-      const restored = PromptlSpecification.fromGenAI({ messages: genAI.messages, direction: "output" });
+      const restored = PromptlSpecification.fromGenAI({
+        messages: genAI.messages,
+        direction: "output",
+        providerMetadata: "passthrough",
+      });
 
       // Should have both args and toolArguments for backwards compat
       expect(restored.messages[0]?.content[0]).toMatchObject({
@@ -1402,7 +1465,11 @@ describe("PromptlSpecification", () => {
       ];
 
       const genAI = PromptlSpecification.toGenAI({ messages: original, direction: "output" });
-      const restored = PromptlSpecification.fromGenAI({ messages: genAI.messages, direction: "output" });
+      const restored = PromptlSpecification.fromGenAI({
+        messages: genAI.messages,
+        direction: "output",
+        providerMetadata: "passthrough",
+      });
 
       // Should have both args and toolArguments for backwards compat
       expect(restored.messages[0]?.content[0]).toMatchObject({
@@ -1425,7 +1492,11 @@ describe("PromptlSpecification", () => {
       ];
 
       const genAI = PromptlSpecification.toGenAI({ messages: original, direction: "input" });
-      const restored = PromptlSpecification.fromGenAI({ messages: genAI.messages, direction: "output" });
+      const restored = PromptlSpecification.fromGenAI({
+        messages: genAI.messages,
+        direction: "output",
+        providerMetadata: "passthrough",
+      });
 
       expect(restored.messages).toEqual(original);
     });
@@ -1439,7 +1510,11 @@ describe("PromptlSpecification", () => {
       ];
 
       const genAI = PromptlSpecification.toGenAI({ messages: original, direction: "output" });
-      const restored = PromptlSpecification.fromGenAI({ messages: genAI.messages, direction: "output" });
+      const restored = PromptlSpecification.fromGenAI({
+        messages: genAI.messages,
+        direction: "output",
+        providerMetadata: "passthrough",
+      });
 
       expect(restored.messages).toEqual(original);
     });
@@ -1453,7 +1528,11 @@ describe("PromptlSpecification", () => {
       ];
 
       const genAI = PromptlSpecification.toGenAI({ messages: original, direction: "output" });
-      const restored = PromptlSpecification.fromGenAI({ messages: genAI.messages, direction: "output" });
+      const restored = PromptlSpecification.fromGenAI({
+        messages: genAI.messages,
+        direction: "output",
+        providerMetadata: "passthrough",
+      });
 
       expect(restored.messages).toEqual(original);
     });
@@ -1466,7 +1545,11 @@ describe("PromptlSpecification", () => {
       ];
 
       const genAI = PromptlSpecification.toGenAI({ messages: original, direction: "input" });
-      const restored = PromptlSpecification.fromGenAI({ messages: genAI.messages, direction: "output" });
+      const restored = PromptlSpecification.fromGenAI({
+        messages: genAI.messages,
+        direction: "output",
+        providerMetadata: "passthrough",
+      });
 
       expect(restored.messages).toEqual(original);
     });
@@ -1485,7 +1568,11 @@ describe("PromptlSpecification", () => {
       ];
 
       const genAI = PromptlSpecification.toGenAI({ messages: original, direction: "input" });
-      const restored = PromptlSpecification.fromGenAI({ messages: genAI.messages, direction: "output" });
+      const restored = PromptlSpecification.fromGenAI({
+        messages: genAI.messages,
+        direction: "output",
+        providerMetadata: "passthrough",
+      });
 
       expect(restored.messages).toEqual(original);
     });
@@ -1501,7 +1588,11 @@ describe("PromptlSpecification", () => {
       ];
 
       const genAI = PromptlSpecification.toGenAI({ messages: original, direction: "input" });
-      const restored = PromptlSpecification.fromGenAI({ messages: genAI.messages, direction: "output" });
+      const restored = PromptlSpecification.fromGenAI({
+        messages: genAI.messages,
+        direction: "output",
+        providerMetadata: "passthrough",
+      });
 
       expect(restored.messages).toEqual(original);
     });
@@ -1516,7 +1607,11 @@ describe("PromptlSpecification", () => {
       ];
 
       const genAI = PromptlSpecification.toGenAI({ messages: original, direction: "input" });
-      const restored = PromptlSpecification.fromGenAI({ messages: genAI.messages, direction: "output" });
+      const restored = PromptlSpecification.fromGenAI({
+        messages: genAI.messages,
+        direction: "output",
+        providerMetadata: "passthrough",
+      });
 
       expect(restored.messages).toEqual(original);
     });
@@ -1531,7 +1626,11 @@ describe("PromptlSpecification", () => {
       ];
 
       const genAI = PromptlSpecification.toGenAI({ messages: original, direction: "output" });
-      const restored = PromptlSpecification.fromGenAI({ messages: genAI.messages, direction: "output" });
+      const restored = PromptlSpecification.fromGenAI({
+        messages: genAI.messages,
+        direction: "output",
+        providerMetadata: "passthrough",
+      });
 
       expect(restored.messages).toEqual(original);
     });
@@ -1546,7 +1645,11 @@ describe("PromptlSpecification", () => {
       ];
 
       const genAI = PromptlSpecification.toGenAI({ messages: original, direction: "input" });
-      const restored = PromptlSpecification.fromGenAI({ messages: genAI.messages, direction: "output" });
+      const restored = PromptlSpecification.fromGenAI({
+        messages: genAI.messages,
+        direction: "output",
+        providerMetadata: "passthrough",
+      });
 
       expect(restored.messages).toEqual(original);
     });
@@ -1569,7 +1672,11 @@ describe("PromptlSpecification", () => {
       ];
 
       const genAI = PromptlSpecification.toGenAI({ messages: original, direction: "input" });
-      const restored = PromptlSpecification.fromGenAI({ messages: genAI.messages, direction: "output" });
+      const restored = PromptlSpecification.fromGenAI({
+        messages: genAI.messages,
+        direction: "output",
+        providerMetadata: "passthrough",
+      });
 
       // Tool-call will get toolArguments added for backwards compat
       expect(restored.messages[0]).toEqual(original[0]);
@@ -1786,7 +1893,7 @@ describe("PromptlSpecification", () => {
         },
       ];
 
-      const result = PromptlSpecification.fromGenAI({ messages, direction: "output" });
+      const result = PromptlSpecification.fromGenAI({ messages, direction: "output", providerMetadata: "strip" });
 
       // Should return empty array since there are no tool_call_response parts
       expect(result.messages).toEqual([]);
@@ -1798,7 +1905,7 @@ describe("PromptlSpecification", () => {
     });
 
     it("should handle fromGenAI with empty messages array", () => {
-      const result = PromptlSpecification.fromGenAI({ messages: [], direction: "output" });
+      const result = PromptlSpecification.fromGenAI({ messages: [], direction: "output", providerMetadata: "strip" });
       expect(result.messages).toEqual([]);
     });
 

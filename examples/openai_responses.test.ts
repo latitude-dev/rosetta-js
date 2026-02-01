@@ -266,8 +266,11 @@ describe("OpenAI Responses E2E", () => {
 
       expect(result.messages[0]?.parts[0]?.type).toBe("text");
       expect((result.messages[0]?.parts[0] as { content: string }).content).toBe("I cannot help with that request.");
-      // isRefusal is stored at root level for cross-provider access
-      expect(result.messages[0]?.parts[0]?._provider_metadata?.isRefusal).toBe(true);
+      // isRefusal is stored in _known_fields for cross-provider access
+      expect(
+        (result.messages[0]?.parts[0]?._provider_metadata?._known_fields as Record<string, unknown> | undefined)
+          ?.isRefusal,
+      ).toBe(true);
     });
 
     it("should translate passthrough items (file_search_call)", () => {
@@ -288,8 +291,8 @@ describe("OpenAI Responses E2E", () => {
 
       expect(result.messages[0]?.role).toBe("assistant");
       expect(result.messages[0]?.parts[0]?.type).toBe("file_search_call");
-      // Full item is preserved in metadata
-      expect(result.messages[0]?.parts[0]?._provider_metadata?.openai_responses).toBeDefined();
+      // Full item is preserved in metadata at root level
+      expect(result.messages[0]?.parts[0]?._provider_metadata).toBeDefined();
     });
 
     it("should translate passthrough items (web_search_call)", () => {
