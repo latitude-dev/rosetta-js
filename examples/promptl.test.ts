@@ -664,4 +664,204 @@ You are a {{ role }} assistant specializing in {{ domain }}.
       expect(result.messages[0]?.role).toBe("user");
     });
   });
+
+  describe("assistant message with tool_call_response parts (cross-provider)", () => {
+    it("should convert GenAI assistant with tool_call_response to Promptl tool message (single result)", () => {
+      // This simulates messages that came from VercelAI where assistant can have tool-result content
+      const genAIMessages: GenAIMessage[] = [
+        {
+          role: "assistant",
+          parts: [
+            {
+              type: "tool_call_response",
+              id: "x",
+              response: "ok",
+              _provider_metadata: { _known_fields: { toolName: "T" } },
+            },
+          ],
+        },
+      ];
+
+      const result = translate(genAIMessages, {
+        from: Provider.GenAI,
+        to: Provider.Promptl,
+      });
+
+      expect(result.messages).toHaveLength(1);
+      expect(result.messages[0]?.role).toBe("tool");
+      expect((result.messages[0] as { toolName: string }).toolName).toBe("T");
+      expect((result.messages[0] as { toolId: string }).toolId).toBe("x");
+
+      const content = result.messages[0]?.content[0] as {
+        type: string;
+        toolCallId: string;
+        toolName: string;
+        result: unknown;
+        isError: boolean;
+      };
+      expect(content.type).toBe("tool-result");
+      expect(content.toolCallId).toBe("x");
+      expect(content.toolName).toBe("T");
+      expect(content.result).toBe("ok");
+      expect(content.isError).toBe(false);
+    });
+
+    it("should convert GenAI assistant with multiple tool_call_response to multiple Promptl tool messages", () => {
+      const genAIMessages: GenAIMessage[] = [
+        {
+          role: "assistant",
+          parts: [
+            {
+              type: "tool_call_response",
+              id: "a",
+              response: { k: 1 },
+              _provider_metadata: { _known_fields: { toolName: "A" } },
+            },
+            {
+              type: "tool_call_response",
+              id: "b",
+              response: "bad",
+              _provider_metadata: { _known_fields: { toolName: "B", isError: true } },
+            },
+          ],
+        },
+      ];
+
+      const result = translate(genAIMessages, {
+        from: Provider.GenAI,
+        to: Provider.Promptl,
+      });
+
+      expect(result.messages).toHaveLength(2);
+
+      // First tool message
+      expect(result.messages[0]?.role).toBe("tool");
+      expect((result.messages[0] as { toolName: string }).toolName).toBe("A");
+      const content0 = result.messages[0]?.content[0] as { result: unknown; isError: boolean };
+      expect(content0.result).toEqual({ k: 1 });
+      expect(content0.isError).toBe(false);
+
+      // Second tool message (with error)
+      expect(result.messages[1]?.role).toBe("tool");
+      expect((result.messages[1] as { toolName: string }).toolName).toBe("B");
+      const content1 = result.messages[1]?.content[0] as { result: unknown; isError: boolean };
+      expect(content1.result).toBe("bad");
+      expect(content1.isError).toBe(true);
+    });
+
+    it("should convert GenAI assistant with array response in tool_call_response to Promptl", () => {
+      const genAIMessages: GenAIMessage[] = [
+        {
+          role: "assistant",
+          parts: [
+            {
+              type: "tool_call_response",
+              id: "z",
+              response: [
+                { type: "text", text: "hey" },
+                { type: "media", data: "filebytes", mediaType: "image/jpeg" },
+              ],
+              _provider_metadata: { _known_fields: { toolName: "Z" } },
+            },
+          ],
+        },
+      ];
+
+      const result = translate(genAIMessages, {
+        from: Provider.GenAI,
+        to: Provider.Promptl,
+      });
+
+      expect(result.messages).toHaveLength(1);
+      expect(result.messages[0]?.role).toBe("tool");
+      const content = result.messages[0]?.content[0] as { result: unknown; isError: boolean };
+      expect(content.result).toEqual([
+        { type: "text", text: "hey" },
+        { type: "media", data: "filebytes", mediaType: "image/jpeg" },
+      ]);
+      expect(content.isError).toBe(false);
+    });
+
+    it("should convert GenAI tool role with tool_call_response to Promptl tool message", () => {
+      const genAIMessages: GenAIMessage[] = [
+        {
+          role: "tool",
+          parts: [
+            {
+              type: "tool_call_response",
+              id: "tid",
+              response: { ok: true },
+              _provider_metadata: { _known_fields: { toolName: "tooly" } },
+            },
+          ],
+        },
+      ];
+
+      const result = translate(genAIMessages, {
+        from: Provider.GenAI,
+        to: Provider.Promptl,
+      });
+
+      expect(result.messages).toHaveLength(1);
+      expect(result.messages[0]?.role).toBe("tool");
+      expect((result.messages[0] as { toolName: string }).toolName).toBe("tooly");
+      expect((result.messages[0] as { toolId: string }).toolId).toBe("tid");
+
+      const content = result.messages[0]?.content[0] as { result: unknown; isError: boolean };
+      expect(content.result).toEqual({ ok: true });
+      expect(content.isError).toBe(false);
+    });
+
+    it("should always include isError field (set to false when not an error)", () => {
+      const genAIMessages: GenAIMessage[] = [
+        {
+          role: "tool",
+          parts: [
+            {
+              type: "tool_call_response",
+              id: "call-1",
+              response: "success",
+              // No isError in metadata
+            },
+          ],
+        },
+      ];
+
+      const result = translate(genAIMessages, {
+        from: Provider.GenAI,
+        to: Provider.Promptl,
+      });
+
+      const content = result.messages[0]?.content[0] as { isError?: boolean };
+      expect(content.isError).toBe(false);
+    });
+
+    it("should handle mixed assistant content with text and tool_call_response", () => {
+      const genAIMessages: GenAIMessage[] = [
+        {
+          role: "assistant",
+          parts: [
+            { type: "text", content: "Processing complete." },
+            {
+              type: "tool_call_response",
+              id: "call-1",
+              response: "done",
+              _provider_metadata: { _known_fields: { toolName: "processor" } },
+            },
+          ],
+        },
+      ];
+
+      const result = translate(genAIMessages, {
+        from: Provider.GenAI,
+        to: Provider.Promptl,
+      });
+
+      // Should create assistant message first, then tool message
+      expect(result.messages).toHaveLength(2);
+      expect(result.messages[0]?.role).toBe("assistant");
+      expect((result.messages[0]?.content[0] as { text: string }).text).toBe("Processing complete.");
+      expect(result.messages[1]?.role).toBe("tool");
+    });
+  });
 });

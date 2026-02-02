@@ -445,7 +445,11 @@ function promptlMessageToGenAI(message: PromptlMessage): GenAIMessage {
 }
 
 /** Converts a GenAI part to Promptl content. */
-function genAIPartToPromptl(part: GenAIPart, mode: ProviderMetadataMode): PromptlContent | null {
+function genAIPartToPromptl(
+  part: GenAIPart,
+  toolCallNameMap: Map<string, string>,
+  mode: ProviderMetadataMode,
+): PromptlContent | null {
   const metadata = readMetadata(part as unknown as Record<string, unknown>);
   const known = getKnownFields(metadata);
 
@@ -509,9 +513,29 @@ function genAIPartToPromptl(part: GenAIPart, mode: ProviderMetadataMode): Prompt
       } as PromptlContent);
     }
 
-    case "tool_call_response":
-      // This is handled at the message level for tool role
-      return null;
+    case "tool_call_response": {
+      // Convert to PromptlToolResultContent
+      const toolId = String((part.id as string | null | undefined) ?? "");
+      // Read toolName from known fields
+      let toolName = known.toolName;
+      // Fallback: try to infer from matching tool call if not in known fields
+      if (!toolName && toolId && toolCallNameMap.has(toolId)) {
+        toolName = toolCallNameMap.get(toolId);
+      }
+      // Fallback to "unknown" if still not found
+      toolName = toolName ?? "unknown";
+
+      // Read isError from known fields - always include it
+      const isError = known.isError ?? false;
+
+      return applyMode({
+        type: "tool-result",
+        toolCallId: toolId,
+        toolName,
+        result: part.response,
+        isError,
+      } as PromptlContent);
+    }
 
     case "reasoning": {
       // Read originalType from known fields
@@ -543,6 +567,51 @@ function genAIPartToPromptl(part: GenAIPart, mode: ProviderMetadataMode): Prompt
   }
 }
 
+/** Creates a Promptl tool message from a GenAI tool_call_response part. */
+function createToolMessageFromPart(
+  part: GenAIPart,
+  toolCallNameMap: Map<string, string>,
+  mode: ProviderMetadataMode,
+): PromptlMessage {
+  const partMetadata = readMetadata(part as unknown as Record<string, unknown>);
+  const known = getKnownFields(partMetadata);
+  // Type assertion needed because GenAIGenericPartSchema overlaps with literal types
+  const toolId = String((part.id as string | null | undefined) ?? "");
+
+  // Read toolName from known fields
+  let toolName = known.toolName;
+  // Fallback: try to infer from matching tool call if not in known fields
+  if (!toolName && toolId && toolCallNameMap.has(toolId)) {
+    toolName = toolCallNameMap.get(toolId);
+  }
+
+  // Fallback to "unknown" if still not found
+  toolName = toolName ?? "unknown";
+
+  // Read isError from known fields - always include it
+  const isError = known.isError ?? false;
+
+  // Create tool-result content
+  const toolResultContent: PromptlContent = {
+    type: "tool-result",
+    toolCallId: toolId,
+    toolName,
+    result: part.response,
+    isError,
+  };
+
+  // Apply metadata mode to the tool message
+  // Backwards compatibility: include toolName and toolId at message level
+  const baseToolMsg = {
+    role: "tool" as const,
+    toolName: String(toolName),
+    toolId,
+    content: [applyMetadataMode(toolResultContent, partMetadata, mode, true) as PromptlContent],
+  };
+
+  return applyMetadataMode(baseToolMsg, partMetadata, mode, true) as PromptlMessage;
+}
+
 /** Converts a GenAI message to Promptl message(s). */
 function genAIMessageToPromptl(
   message: GenAIMessage,
@@ -557,54 +626,50 @@ function genAIMessageToPromptl(
 
     for (const part of message.parts) {
       if (part.type === "tool_call_response") {
-        const partMetadata = readMetadata(part as unknown as Record<string, unknown>);
-        const known = getKnownFields(partMetadata);
-        // Type assertion needed because GenAIGenericPartSchema overlaps with literal types
-        const toolId = String((part.id as string | null | undefined) ?? "");
-
-        // Read toolName from known fields
-        let toolName = known.toolName;
-        // Fallback: try to infer from matching tool call if not in known fields
-        if (!toolName && toolId && toolCallNameMap.has(toolId)) {
-          toolName = toolCallNameMap.get(toolId);
-        }
-
-        // Fallback to "unknown" if still not found
-        toolName = toolName ?? "unknown";
-
-        // Convert response back to content
-        let content: PromptlContent[];
-        if (typeof part.response === "string") {
-          content = [{ type: "text", text: part.response }];
-        } else if (Array.isArray(part.response)) {
-          // Response was an array of GenAI parts
-          content = (part.response as GenAIPart[])
-            .map((p) => genAIPartToPromptl(p, mode))
-            .filter((c): c is PromptlContent => c !== null);
-        } else {
-          // Other response types - serialize to JSON text
-          content = [{ type: "text", text: JSON.stringify(part.response) }];
-        }
-
-        // Apply metadata mode to the tool message
-        const baseToolMsg = {
-          role: "tool" as const,
-          toolName: String(toolName),
-          toolId,
-          content,
-        };
-
-        toolMessages.push(applyMetadataMode(baseToolMsg, partMetadata, mode, true) as PromptlMessage);
+        toolMessages.push(createToolMessageFromPart(part, toolCallNameMap, mode));
       }
     }
 
     return toolMessages.length > 0 ? toolMessages : [];
   }
 
+  // Handle assistant role - check if any parts are tool_call_response
+  if (message.role === "assistant") {
+    const toolResponseParts = message.parts.filter((p) => p.type === "tool_call_response");
+    const otherParts = message.parts.filter((p) => p.type !== "tool_call_response");
+
+    // If there are tool_call_response parts, convert them to tool messages
+    if (toolResponseParts.length > 0) {
+      const result: PromptlMessage[] = [];
+
+      // Create tool messages for each tool_call_response part
+      for (const part of toolResponseParts) {
+        result.push(createToolMessageFromPart(part, toolCallNameMap, mode));
+      }
+
+      // If there are other parts, create an assistant message for them
+      if (otherParts.length > 0) {
+        const content: PromptlContent[] = [];
+        for (const part of otherParts) {
+          const converted = genAIPartToPromptl(part, toolCallNameMap, mode);
+          if (converted) {
+            content.push(converted);
+          }
+        }
+        if (content.length > 0) {
+          const assistantMsg = { role: "assistant" as const, content };
+          result.unshift(applyMetadataMode(assistantMsg, msgMetadata, mode, true) as PromptlMessage);
+        }
+      }
+
+      return result;
+    }
+  }
+
   // Convert parts to content
   const content: PromptlContent[] = [];
   for (const part of message.parts) {
-    const converted = genAIPartToPromptl(part, mode);
+    const converted = genAIPartToPromptl(part, toolCallNameMap, mode);
     if (converted) {
       content.push(converted);
     }

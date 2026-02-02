@@ -1003,7 +1003,7 @@ describe("PromptlSpecification", () => {
     });
 
     describe("tool_call_response and tool role", () => {
-      it("should convert tool role with tool_call_response to Promptl tool message", () => {
+      it("should convert tool role with tool_call_response to Promptl tool message with tool-result content", () => {
         const messages: GenAIMessage[] = [
           {
             role: "tool",
@@ -1024,7 +1024,16 @@ describe("PromptlSpecification", () => {
         expect(result.messages[0]?.role).toBe("tool");
         expect((result.messages[0] as { toolId: string }).toolId).toBe("call-123");
         expect((result.messages[0] as { toolName: string }).toolName).toBe("my_tool");
-        expect(result.messages[0]?.content).toEqual([{ type: "text", text: "Success!" }]);
+        // Content should be tool-result format with isError always included
+        expect(result.messages[0]?.content).toEqual([
+          {
+            type: "tool-result",
+            toolCallId: "call-123",
+            toolName: "my_tool",
+            result: "Success!",
+            isError: false,
+          },
+        ]);
       });
 
       it("should convert multiple tool_call_response parts to multiple tool messages", () => {
@@ -1055,7 +1064,7 @@ describe("PromptlSpecification", () => {
         expect((result.messages[1] as { toolName: string }).toolName).toBe("tool_b");
       });
 
-      it("should handle tool_call_response with array response", () => {
+      it("should handle tool_call_response with array response - preserves array in result field", () => {
         const arrayResponse = [
           { type: "text", content: "Part 1" },
           { type: "text", content: "Part 2" },
@@ -1076,12 +1085,18 @@ describe("PromptlSpecification", () => {
 
         const result = PromptlSpecification.fromGenAI({ messages, direction: "output", providerMetadata: "strip" });
 
-        expect(result.messages[0]?.content).toHaveLength(2);
-        expect(result.messages[0]?.content[0]).toEqual({ type: "text", text: "Part 1" });
-        expect(result.messages[0]?.content[1]).toEqual({ type: "text", text: "Part 2" });
+        // Content should have one tool-result with the array as the result
+        expect(result.messages[0]?.content).toHaveLength(1);
+        expect(result.messages[0]?.content[0]).toEqual({
+          type: "tool-result",
+          toolCallId: "call-x",
+          toolName: "multi_part",
+          result: arrayResponse,
+          isError: false,
+        });
       });
 
-      it("should handle tool_call_response with object response (serialize to JSON)", () => {
+      it("should handle tool_call_response with object response - preserves object in result field", () => {
         const messages: GenAIMessage[] = [
           {
             role: "tool",
@@ -1098,9 +1113,15 @@ describe("PromptlSpecification", () => {
 
         const result = PromptlSpecification.fromGenAI({ messages, direction: "output", providerMetadata: "strip" });
 
-        const content = result.messages[0]?.content as Array<{ type: string; text: string }>;
-        expect(content[0]?.type).toBe("text");
-        expect(content[0]?.text).toBe('{"status":"ok","count":5}');
+        // Content should have one tool-result with the object as the result
+        expect(result.messages[0]?.content).toHaveLength(1);
+        expect(result.messages[0]?.content[0]).toEqual({
+          type: "tool-result",
+          toolCallId: "call-obj",
+          toolName: "json_tool",
+          result: { status: "ok", count: 5 },
+          isError: false,
+        });
       });
 
       it("should use 'unknown' as default toolName when not in metadata and no matching tool call", () => {
@@ -1203,6 +1224,212 @@ describe("PromptlSpecification", () => {
 
         // Should still find the tool name because we scan all messages first
         expect((result.messages[0] as { toolName: string }).toolName).toBe("late_tool");
+        // Content should also have the inferred toolName
+        expect(result.messages[0]?.content[0]).toEqual({
+          type: "tool-result",
+          toolCallId: "call-xyz",
+          toolName: "late_tool",
+          result: "data",
+          isError: false,
+        });
+      });
+
+      it("should convert assistant message with tool_call_response parts to tool messages", () => {
+        // GenAI allows tool_call_response in assistant messages (e.g., from VercelAI)
+        const messages: GenAIMessage[] = [
+          {
+            role: "assistant",
+            parts: [
+              {
+                type: "tool_call_response",
+                id: "x",
+                response: "ok",
+                _provider_metadata: { _known_fields: { toolName: "T" } },
+              },
+            ],
+          },
+        ];
+
+        const result = PromptlSpecification.fromGenAI({ messages, direction: "output", providerMetadata: "strip" });
+
+        // Should be converted to a tool message
+        expect(result.messages).toHaveLength(1);
+        expect(result.messages[0]?.role).toBe("tool");
+        expect((result.messages[0] as { toolName: string }).toolName).toBe("T");
+        expect((result.messages[0] as { toolId: string }).toolId).toBe("x");
+        expect(result.messages[0]?.content[0]).toEqual({
+          type: "tool-result",
+          toolCallId: "x",
+          toolName: "T",
+          result: "ok",
+          isError: false,
+        });
+      });
+
+      it("should convert assistant message with multiple tool_call_response parts to multiple tool messages", () => {
+        const messages: GenAIMessage[] = [
+          {
+            role: "assistant",
+            parts: [
+              {
+                type: "tool_call_response",
+                id: "a",
+                response: { k: 1 },
+                _provider_metadata: { _known_fields: { toolName: "A" } },
+              },
+              {
+                type: "tool_call_response",
+                id: "b",
+                response: "bad",
+                _provider_metadata: { _known_fields: { toolName: "B", isError: true } },
+              },
+            ],
+          },
+        ];
+
+        const result = PromptlSpecification.fromGenAI({ messages, direction: "output", providerMetadata: "strip" });
+
+        // Should be converted to two tool messages
+        expect(result.messages).toHaveLength(2);
+
+        expect(result.messages[0]?.role).toBe("tool");
+        expect((result.messages[0] as { toolName: string }).toolName).toBe("A");
+        expect(result.messages[0]?.content[0]).toEqual({
+          type: "tool-result",
+          toolCallId: "a",
+          toolName: "A",
+          result: { k: 1 },
+          isError: false,
+        });
+
+        expect(result.messages[1]?.role).toBe("tool");
+        expect((result.messages[1] as { toolName: string }).toolName).toBe("B");
+        expect(result.messages[1]?.content[0]).toEqual({
+          type: "tool-result",
+          toolCallId: "b",
+          toolName: "B",
+          result: "bad",
+          isError: true,
+        });
+      });
+
+      it("should convert assistant message with content array as tool_call_response result", () => {
+        const messages: GenAIMessage[] = [
+          {
+            role: "assistant",
+            parts: [
+              {
+                type: "tool_call_response",
+                id: "z",
+                response: [
+                  { type: "text", text: "hey" },
+                  { type: "media", data: "filebytes", mediaType: "image/jpeg" },
+                ],
+                _provider_metadata: { _known_fields: { toolName: "Z" } },
+              },
+            ],
+          },
+        ];
+
+        const result = PromptlSpecification.fromGenAI({ messages, direction: "output", providerMetadata: "strip" });
+
+        // Should be converted to a tool message with array result
+        expect(result.messages).toHaveLength(1);
+        expect(result.messages[0]?.role).toBe("tool");
+        expect((result.messages[0] as { toolName: string }).toolName).toBe("Z");
+        expect(result.messages[0]?.content[0]).toEqual({
+          type: "tool-result",
+          toolCallId: "z",
+          toolName: "Z",
+          result: [
+            { type: "text", text: "hey" },
+            { type: "media", data: "filebytes", mediaType: "image/jpeg" },
+          ],
+          isError: false,
+        });
+      });
+
+      it("should handle assistant message with mixed content and tool_call_response parts", () => {
+        const messages: GenAIMessage[] = [
+          {
+            role: "assistant",
+            parts: [
+              { type: "text", content: "Processing results..." },
+              {
+                type: "tool_call_response",
+                id: "tid",
+                response: { ok: true },
+                _provider_metadata: { _known_fields: { toolName: "tooly" } },
+              },
+            ],
+          },
+        ];
+
+        const result = PromptlSpecification.fromGenAI({ messages, direction: "output", providerMetadata: "strip" });
+
+        // Should create assistant message for text, then tool message for tool_call_response
+        expect(result.messages).toHaveLength(2);
+
+        // First: assistant message with text content
+        expect(result.messages[0]?.role).toBe("assistant");
+        expect(result.messages[0]?.content[0]).toEqual({
+          type: "text",
+          text: "Processing results...",
+        });
+
+        // Second: tool message
+        expect(result.messages[1]?.role).toBe("tool");
+        expect((result.messages[1] as { toolName: string }).toolName).toBe("tooly");
+        expect(result.messages[1]?.content[0]).toEqual({
+          type: "tool-result",
+          toolCallId: "tid",
+          toolName: "tooly",
+          result: { ok: true },
+          isError: false,
+        });
+      });
+
+      it("should always include isError field (false) even when not an error", () => {
+        const messages: GenAIMessage[] = [
+          {
+            role: "tool",
+            parts: [
+              {
+                type: "tool_call_response",
+                id: "call-1",
+                response: "success",
+                // No isError in _known_fields
+              },
+            ],
+          },
+        ];
+
+        const result = PromptlSpecification.fromGenAI({ messages, direction: "output", providerMetadata: "strip" });
+
+        // isError should be false (not undefined/missing)
+        const toolResult = result.messages[0]?.content[0] as { isError?: boolean };
+        expect(toolResult.isError).toBe(false);
+      });
+
+      it("should set isError to true when error is indicated in metadata", () => {
+        const messages: GenAIMessage[] = [
+          {
+            role: "tool",
+            parts: [
+              {
+                type: "tool_call_response",
+                id: "call-err",
+                response: "Something went wrong",
+                _provider_metadata: { _known_fields: { toolName: "fail_tool", isError: true } },
+              },
+            ],
+          },
+        ];
+
+        const result = PromptlSpecification.fromGenAI({ messages, direction: "output", providerMetadata: "strip" });
+
+        const toolResult = result.messages[0]?.content[0] as { isError?: boolean };
+        expect(toolResult.isError).toBe(true);
       });
     });
 
@@ -1481,7 +1708,7 @@ describe("PromptlSpecification", () => {
       });
     });
 
-    it("should preserve tool message through round-trip (legacy format)", () => {
+    it("should convert legacy tool message to tool-result format in round-trip", () => {
       const original: PromptlMessage[] = [
         {
           role: "tool",
@@ -1498,7 +1725,18 @@ describe("PromptlSpecification", () => {
         providerMetadata: "passthrough",
       });
 
-      expect(restored.messages).toEqual(original);
+      // Legacy format is converted to new tool-result format
+      expect(restored.messages).toHaveLength(1);
+      expect(restored.messages[0]?.role).toBe("tool");
+      expect((restored.messages[0] as { toolName: string }).toolName).toBe("weather");
+      expect((restored.messages[0] as { toolId: string }).toolId).toBe("call-abc");
+      expect(restored.messages[0]?.content[0]).toEqual({
+        type: "tool-result",
+        toolCallId: "call-abc",
+        toolName: "weather",
+        result: "Sunny, 25°C",
+        isError: false,
+      });
     });
 
     it("should preserve reasoning content through round-trip", () => {
@@ -1654,7 +1892,7 @@ describe("PromptlSpecification", () => {
       expect(restored.messages).toEqual(original);
     });
 
-    it("should preserve complex conversation through round-trip", () => {
+    it("should preserve complex conversation through round-trip (with tool-result conversion)", () => {
       const original: PromptlMessage[] = [
         { role: "system", content: [{ type: "text", text: "You are a helpful assistant." }] },
         { role: "user", name: "John", content: [{ type: "text", text: "What's the weather?" }] },
@@ -1687,7 +1925,17 @@ describe("PromptlSpecification", () => {
         toolName: "get_weather",
         args: { city: "Paris" },
       });
-      expect(restored.messages[3]).toEqual(original[3]);
+      // Tool message: legacy format is converted to new tool-result format
+      expect(restored.messages[3]?.role).toBe("tool");
+      expect((restored.messages[3] as { toolName: string }).toolName).toBe("get_weather");
+      expect((restored.messages[3] as { toolId: string }).toolId).toBe("call-1");
+      expect(restored.messages[3]?.content[0]).toEqual({
+        type: "tool-result",
+        toolCallId: "call-1",
+        toolName: "get_weather",
+        result: "22°C, Sunny",
+        isError: false,
+      });
       expect(restored.messages[4]).toEqual(original[4]);
     });
   });
