@@ -153,15 +153,28 @@ export const VercelAIToolResultOutputSchema = z.discriminatedUnion("type", [
 ]);
 export type VercelAIToolResultOutput = Infer<typeof VercelAIToolResultOutputSchema>;
 
-/** Tool result content part. */
+/**
+ * Tool result content part.
+ *
+ * Supports two formats:
+ * - Modern: `output` field with typed ToolResultOutput structure
+ * - Legacy: `result` field (unknown) with optional `isError` boolean
+ */
 export const VercelAIToolResultPartSchema = z
   .object({
     type: z.literal("tool-result"),
     toolCallId: z.string(),
     toolName: z.string(),
-    output: VercelAIToolResultOutputSchema,
+    // Modern format
+    output: VercelAIToolResultOutputSchema.optional(),
+    // Legacy format
+    result: z.unknown().optional(),
+    isError: z.boolean().optional(),
   })
-  .passthrough();
+  .passthrough()
+  .refine((data) => data.output !== undefined || data.result !== undefined, {
+    message: "Either 'output' or 'result' must be provided",
+  });
 export type VercelAIToolResultPart = Infer<typeof VercelAIToolResultPartSchema>;
 
 /** Tool approval request part. */

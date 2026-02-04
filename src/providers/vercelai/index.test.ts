@@ -339,6 +339,105 @@ describe("VercelAISpecification", () => {
       });
     });
 
+    describe("tool-result legacy format (result + isError)", () => {
+      it("should convert legacy format with result field to tool_call_response", () => {
+        const messages = [
+          {
+            role: "tool" as const,
+            content: [
+              {
+                type: "tool-result" as const,
+                toolCallId: "call-legacy-1",
+                toolName: "get_data",
+                result: { data: "value" },
+              },
+            ],
+          },
+        ];
+
+        const result = VercelAISpecification.toGenAI({ messages, direction: "input" });
+
+        expect(result.messages[0]?.role).toBe("tool");
+        expect(result.messages[0]?.parts[0]?.type).toBe("tool_call_response");
+        expect((result.messages[0]?.parts[0] as { id: string }).id).toBe("call-legacy-1");
+        expect((result.messages[0]?.parts[0] as { response: unknown }).response).toEqual({ data: "value" });
+      });
+
+      it("should convert legacy format with result and isError=true", () => {
+        const messages = [
+          {
+            role: "tool" as const,
+            content: [
+              {
+                type: "tool-result" as const,
+                toolCallId: "call-legacy-2",
+                toolName: "failing_tool",
+                result: "Something went wrong",
+                isError: true,
+              },
+            ],
+          },
+        ];
+
+        const result = VercelAISpecification.toGenAI({ messages, direction: "input" });
+
+        expect(result.messages[0]?.parts[0]?.type).toBe("tool_call_response");
+        expect((result.messages[0]?.parts[0] as { response: unknown }).response).toBe("Something went wrong");
+        // isError should be stored in _known_fields
+        expect(
+          // biome-ignore lint/complexity/useLiteralKeys: required for index signature access
+          (result.messages[0]?.parts[0]?._provider_metadata?._known_fields as Record<string, unknown>)?.["isError"],
+        ).toBe(true);
+      });
+
+      it("should convert legacy format with string result", () => {
+        const messages = [
+          {
+            role: "tool" as const,
+            content: [
+              {
+                type: "tool-result" as const,
+                toolCallId: "call-legacy-3",
+                toolName: "string_tool",
+                result: "Success message",
+              },
+            ],
+          },
+        ];
+
+        const result = VercelAISpecification.toGenAI({ messages, direction: "input" });
+
+        expect((result.messages[0]?.parts[0] as { response: unknown }).response).toBe("Success message");
+        // outputType should be inferred as "text" for string result
+        // biome-ignore lint/complexity/useLiteralKeys: required for index signature access
+        expect(result.messages[0]?.parts[0]?._provider_metadata?.["outputType"]).toBe("text");
+      });
+
+      it("should convert legacy format with JSON result and isError=true to error-json type", () => {
+        const messages = [
+          {
+            role: "tool" as const,
+            content: [
+              {
+                type: "tool-result" as const,
+                toolCallId: "call-legacy-4",
+                toolName: "json_error_tool",
+                result: { error: "details" },
+                isError: true,
+              },
+            ],
+          },
+        ];
+
+        const result = VercelAISpecification.toGenAI({ messages, direction: "input" });
+
+        expect((result.messages[0]?.parts[0] as { response: unknown }).response).toEqual({ error: "details" });
+        // outputType should be inferred as "error-json" for JSON error result
+        // biome-ignore lint/complexity/useLiteralKeys: required for index signature access
+        expect(result.messages[0]?.parts[0]?._provider_metadata?.["outputType"]).toBe("error-json");
+      });
+    });
+
     describe("tool-approval-request content", () => {
       it("should convert tool-approval-request to generic part", () => {
         const messages: VercelAIMessage[] = [
@@ -751,6 +850,92 @@ describe("VercelAISpecification", () => {
       });
     });
 
+    describe("fromGenAI always uses modern output format", () => {
+      it("should always output 'output' field, never 'result' + 'isError'", () => {
+        const messages: GenAIMessage[] = [
+          {
+            role: "tool",
+            parts: [
+              {
+                type: "tool_call_response",
+                id: "call-123",
+                response: "Some result",
+                _provider_metadata: { _known_fields: { toolName: "my_tool" } },
+              },
+            ],
+          },
+        ];
+
+        const result = VercelAISpecification.fromGenAI({ messages, direction: "output", providerMetadata: "strip" });
+
+        const content = result.messages[0]?.content as Array<{
+          type: string;
+          output?: unknown;
+          result?: unknown;
+          isError?: boolean;
+        }>;
+        // Should have 'output' field
+        expect(content[0]?.output).toBeDefined();
+        expect(content[0]?.output).toEqual({ type: "text", value: "Some result" });
+        // Should NOT have 'result' or 'isError' fields
+        expect(content[0]?.result).toBeUndefined();
+        expect(content[0]?.isError).toBeUndefined();
+      });
+
+      it("should output error type in 'output' field for error responses", () => {
+        const messages: GenAIMessage[] = [
+          {
+            role: "tool",
+            parts: [
+              {
+                type: "tool_call_response",
+                id: "call-456",
+                response: "Error occurred",
+                _provider_metadata: { _known_fields: { toolName: "error_tool", isError: true } },
+              },
+            ],
+          },
+        ];
+
+        const result = VercelAISpecification.fromGenAI({ messages, direction: "output", providerMetadata: "strip" });
+
+        const content = result.messages[0]?.content as Array<{
+          type: string;
+          output?: { type: string; value?: unknown };
+          result?: unknown;
+          isError?: boolean;
+        }>;
+        // Should use error-text type in output
+        expect(content[0]?.output).toEqual({ type: "error-text", value: "Error occurred" });
+        // Should NOT have legacy fields
+        expect(content[0]?.result).toBeUndefined();
+        expect(content[0]?.isError).toBeUndefined();
+      });
+
+      it("should output json type in 'output' field for object responses", () => {
+        const messages: GenAIMessage[] = [
+          {
+            role: "tool",
+            parts: [
+              {
+                type: "tool_call_response",
+                id: "call-789",
+                response: { weather: "sunny", temp: 22 },
+                _provider_metadata: { _known_fields: { toolName: "weather_tool" } },
+              },
+            ],
+          },
+        ];
+
+        const result = VercelAISpecification.fromGenAI({ messages, direction: "output", providerMetadata: "strip" });
+
+        const content = result.messages[0]?.content as Array<{
+          output?: { type: string; value?: unknown };
+        }>;
+        expect(content[0]?.output).toEqual({ type: "json", value: { weather: "sunny", temp: 22 } });
+      });
+    });
+
     describe("tool-approval parts", () => {
       it("should convert tool-approval-request back to VercelAI format", () => {
         const messages: GenAIMessage[] = [
@@ -988,6 +1173,76 @@ describe("VercelAISpecification", () => {
       expect(content[0]?.text).toBe("Let me think about this...");
     });
 
+    it("should convert legacy tool-result format to modern output format on round-trip", () => {
+      // Input uses legacy format (result + isError)
+      const original = [
+        {
+          role: "tool" as const,
+          content: [
+            {
+              type: "tool-result" as const,
+              toolCallId: "call-legacy",
+              toolName: "legacy_tool",
+              result: { legacy: "data" },
+              isError: false,
+            },
+          ],
+        },
+      ];
+
+      const genAI = VercelAISpecification.toGenAI({ messages: original, direction: "input" });
+      const restored = VercelAISpecification.fromGenAI({
+        messages: genAI.messages,
+        direction: "output",
+        providerMetadata: "passthrough",
+      });
+
+      // Output should use modern format (output field)
+      const content = restored.messages[0]?.content as Array<{
+        type: string;
+        toolCallId: string;
+        toolName: string;
+        output: { type: string; value: unknown };
+        result?: unknown;
+        isError?: boolean;
+      }>;
+      expect(content[0]?.output).toEqual({ type: "json", value: { legacy: "data" } });
+      // Legacy fields should NOT be present
+      expect(content[0]?.result).toBeUndefined();
+      expect(content[0]?.isError).toBeUndefined();
+    });
+
+    it("should preserve error status when converting legacy format through round-trip", () => {
+      // Input uses legacy format with isError=true
+      const original = [
+        {
+          role: "tool" as const,
+          content: [
+            {
+              type: "tool-result" as const,
+              toolCallId: "call-error",
+              toolName: "error_tool",
+              result: "Error message",
+              isError: true,
+            },
+          ],
+        },
+      ];
+
+      const genAI = VercelAISpecification.toGenAI({ messages: original, direction: "input" });
+      const restored = VercelAISpecification.fromGenAI({
+        messages: genAI.messages,
+        direction: "output",
+        providerMetadata: "passthrough",
+      });
+
+      // Output should use modern format with error type
+      const content = restored.messages[0]?.content as Array<{
+        output: { type: string; value: unknown };
+      }>;
+      expect(content[0]?.output).toEqual({ type: "error-text", value: "Error message" });
+    });
+
     it("should preserve complex conversation through round-trip", () => {
       const original: VercelAIMessage[] = [
         { role: "system", content: "You are a helpful assistant." },
@@ -1060,6 +1315,75 @@ describe("VercelAISpecification", () => {
 
       const result = VercelAISpecification.messageSchema.safeParse(message);
       expect(result.success).toBe(true);
+    });
+
+    it("should validate tool-result with modern output format", () => {
+      const message = {
+        role: "tool" as const,
+        content: [
+          {
+            type: "tool-result" as const,
+            toolCallId: "1",
+            toolName: "test",
+            output: { type: "json" as const, value: { data: "test" } },
+          },
+        ],
+      };
+
+      const result = VercelAISpecification.messageSchema.safeParse(message);
+      expect(result.success).toBe(true);
+    });
+
+    it("should validate tool-result with legacy result format", () => {
+      const message = {
+        role: "tool" as const,
+        content: [
+          {
+            type: "tool-result" as const,
+            toolCallId: "1",
+            toolName: "test",
+            result: { data: "legacy" },
+          },
+        ],
+      };
+
+      const result = VercelAISpecification.messageSchema.safeParse(message);
+      expect(result.success).toBe(true);
+    });
+
+    it("should validate tool-result with legacy result and isError", () => {
+      const message = {
+        role: "tool" as const,
+        content: [
+          {
+            type: "tool-result" as const,
+            toolCallId: "1",
+            toolName: "test",
+            result: "Error occurred",
+            isError: true,
+          },
+        ],
+      };
+
+      const result = VercelAISpecification.messageSchema.safeParse(message);
+      expect(result.success).toBe(true);
+    });
+
+    it("should reject tool-result without output or result", () => {
+      const message = {
+        role: "tool" as const,
+        content: [
+          {
+            type: "tool-result" as const,
+            toolCallId: "1",
+            toolName: "test",
+            // Neither output nor result provided
+          },
+        ],
+      };
+
+      const result = VercelAISpecification.messageSchema.safeParse(message);
+      expect(result.success).toBe(false);
     });
 
     it("should reject message without role", () => {

@@ -220,39 +220,56 @@ function vercelAIPartToGenAI(part: VercelAIPart, knownPartKeys: string[]): GenAI
     }
 
     case "tool-result": {
-      // Extract the actual value from the typed ToolResultOutput structure
-      const output = part.output as { type: string; value?: unknown; reason?: string };
+      // Support both modern format (output) and legacy format (result + isError)
       let response: unknown;
       let isError = false;
+      let outputType: string | undefined;
 
-      if (output && typeof output === "object" && "type" in output) {
-        // Handle typed ToolResultOutput
-        switch (output.type) {
-          case "text":
-          case "json":
-          case "error-text":
-          case "error-json":
-            response = output.value;
-            isError = output.type === "error-text" || output.type === "error-json";
-            break;
-          case "execution-denied":
-            response = output.reason ?? "Execution denied";
-            isError = true;
-            break;
-          case "content":
-            // Content array - pass through as-is
-            response = output.value;
-            break;
-          default:
-            response = output;
+      // Check for modern format first (output field exists)
+      const output = part.output as { type: string; value?: unknown; reason?: string } | undefined;
+      if (output !== undefined) {
+        if (typeof output === "object" && output !== null && "type" in output) {
+          // Handle typed ToolResultOutput
+          outputType = output.type;
+          switch (output.type) {
+            case "text":
+            case "json":
+            case "error-text":
+            case "error-json":
+              response = output.value;
+              isError = output.type === "error-text" || output.type === "error-json";
+              break;
+            case "execution-denied":
+              response = output.reason ?? "Execution denied";
+              isError = true;
+              break;
+            case "content":
+              // Content array - pass through as-is
+              response = output.value;
+              break;
+            default:
+              response = output;
+          }
+        } else {
+          // Raw value in output field (backwards compatibility)
+          response = output;
         }
       } else {
-        // Raw value (backwards compatibility)
-        response = output;
+        // Legacy format: result + isError fields (no output field)
+        const legacyResult = (part as unknown as { result?: unknown }).result;
+        const legacyIsError = (part as unknown as { isError?: boolean }).isError;
+        response = legacyResult;
+        isError = legacyIsError ?? false;
+        // Infer output type from legacy format for round-trip
+        if (isError) {
+          outputType = typeof legacyResult === "string" ? "error-text" : "error-json";
+        } else {
+          outputType = typeof legacyResult === "string" ? "text" : "json";
+        }
       }
 
       // Store outputType in extra fields for round-trip, known fields for cross-provider
-      const extraWithOutputType = { ...extraFields, ...(output?.type ? { outputType: output.type } : {}) };
+      const extraWithOutputType = { ...extraFields, ...(outputType ? { outputType } : {}) };
       const metadata = storeMetadata(existingMetadata, extraWithOutputType, {
         toolName: part.toolName,
         ...(isError ? { isError: true } : {}),
@@ -336,6 +353,7 @@ function vercelAIMessageToGenAI(message: VercelAIMessage): GenAIMessage {
       if (typeof content === "string") {
         parts.push({ type: "text", content });
       } else {
+        // Include both modern (output) and legacy (result, isError) fields for tool-result
         const knownPartKeys = [
           "type",
           "text",
@@ -346,6 +364,8 @@ function vercelAIMessageToGenAI(message: VercelAIMessage): GenAIMessage {
           "toolName",
           "input",
           "output",
+          "result",
+          "isError",
           "approvalId",
         ];
         for (const part of content) {
@@ -357,7 +377,18 @@ function vercelAIMessageToGenAI(message: VercelAIMessage): GenAIMessage {
 
     case "tool": {
       const toolMsg = message as VercelAIToolMessage;
-      const knownPartKeys = ["type", "toolCallId", "toolName", "output", "approvalId", "approved", "reason"];
+      // Include both modern (output) and legacy (result, isError) fields
+      const knownPartKeys = [
+        "type",
+        "toolCallId",
+        "toolName",
+        "output",
+        "result",
+        "isError",
+        "approvalId",
+        "approved",
+        "reason",
+      ];
       for (const part of toolMsg.content) {
         parts.push(...vercelAIPartToGenAI(part, knownPartKeys));
       }
