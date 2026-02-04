@@ -144,13 +144,10 @@ export type PromptlUserMessage = z.infer<typeof PromptlUserMessageSchema>;
 /** Assistant message in Promptl format.
  * Content can be a string, array of tool call content, or array of any content.
  * Also supports a separate toolCalls array and streaming flag. */
-export const PromptlAssistantMessageSchema = z
-  .object({
-    role: z.literal("assistant"),
-    content: z.union([z.string(), z.array(PromptlContentSchema)]),
-    toolCalls: z.array(PromptlToolCallSchema).nullable().optional(),
-  })
-  .passthrough();
+export const PromptlAssistantMessageSchema = BaseMessageSchema.extend({
+  role: z.literal("assistant"),
+  toolCalls: z.array(PromptlToolCallSchema).nullable().optional(),
+});
 export type PromptlAssistantMessage = z.infer<typeof PromptlAssistantMessageSchema>;
 
 /** Tool message in Promptl format.

@@ -2114,6 +2114,166 @@ describe("PromptlSpecification", () => {
     });
   });
 
+  describe("content format: toGenAI accepts strings, fromGenAI always outputs arrays", () => {
+    describe("toGenAI accepts string content in messages", () => {
+      it("should accept user message with string content", () => {
+        const messages = [{ role: "user" as const, content: "Hello, world!" }];
+
+        const result = PromptlSpecification.toGenAI({ messages, direction: "input" });
+
+        expect(result.messages).toHaveLength(1);
+        expect(result.messages[0]?.parts[0]).toEqual({
+          type: "text",
+          content: "Hello, world!",
+        });
+      });
+
+      it("should accept assistant message with string content", () => {
+        const messages = [{ role: "assistant" as const, content: "I can help!", toolCalls: null }];
+
+        const result = PromptlSpecification.toGenAI({ messages, direction: "output" });
+
+        expect(result.messages).toHaveLength(1);
+        expect(result.messages[0]?.parts[0]).toEqual({
+          type: "text",
+          content: "I can help!",
+        });
+      });
+
+      it("should accept system message with string content", () => {
+        const messages = [{ role: "system" as const, content: "Be helpful" }];
+
+        const result = PromptlSpecification.toGenAI({ messages, direction: "input" });
+
+        expect(result.messages).toHaveLength(1);
+        expect(result.messages[0]?.parts[0]).toEqual({
+          type: "text",
+          content: "Be helpful",
+        });
+      });
+
+      it("should accept developer message with string content", () => {
+        const messages = [{ role: "developer" as const, content: "Developer instructions" }];
+
+        const result = PromptlSpecification.toGenAI({ messages, direction: "input" });
+
+        expect(result.messages).toHaveLength(1);
+        expect(result.messages[0]?.parts[0]).toEqual({
+          type: "text",
+          content: "Developer instructions",
+        });
+      });
+
+      it("should accept mixed messages with string and array content", () => {
+        const messages = [
+          { role: "system" as const, content: "Be helpful" },
+          { role: "user" as const, content: [{ type: "text" as const, text: "Hello" }] },
+          { role: "assistant" as const, content: "Hi there!", toolCalls: null },
+        ];
+
+        const result = PromptlSpecification.toGenAI({ messages, direction: "input" });
+
+        expect(result.messages).toHaveLength(3);
+        expect(result.messages[0]?.parts[0]).toEqual({ type: "text", content: "Be helpful" });
+        expect(result.messages[1]?.parts[0]).toEqual({ type: "text", content: "Hello" });
+        expect(result.messages[2]?.parts[0]).toEqual({ type: "text", content: "Hi there!" });
+      });
+    });
+
+    describe("fromGenAI always outputs content as array, never string", () => {
+      it("should output user message content as array", () => {
+        const messages: GenAIMessage[] = [{ role: "user", parts: [{ type: "text", content: "Hello" }] }];
+
+        const result = PromptlSpecification.fromGenAI({ messages, direction: "output", providerMetadata: "strip" });
+
+        expect(Array.isArray(result.messages[0]?.content)).toBe(true);
+        expect(typeof result.messages[0]?.content).not.toBe("string");
+      });
+
+      it("should output assistant message content as array", () => {
+        const messages: GenAIMessage[] = [{ role: "assistant", parts: [{ type: "text", content: "Hi!" }] }];
+
+        const result = PromptlSpecification.fromGenAI({ messages, direction: "output", providerMetadata: "strip" });
+
+        expect(Array.isArray(result.messages[0]?.content)).toBe(true);
+        expect(typeof result.messages[0]?.content).not.toBe("string");
+      });
+
+      it("should output system message content as array", () => {
+        const messages: GenAIMessage[] = [{ role: "system", parts: [{ type: "text", content: "Be helpful" }] }];
+
+        const result = PromptlSpecification.fromGenAI({ messages, direction: "output", providerMetadata: "strip" });
+
+        expect(Array.isArray(result.messages[0]?.content)).toBe(true);
+        expect(typeof result.messages[0]?.content).not.toBe("string");
+      });
+
+      it("should output developer message content as array", () => {
+        const messages: GenAIMessage[] = [{ role: "developer", parts: [{ type: "text", content: "Dev msg" }] }];
+
+        const result = PromptlSpecification.fromGenAI({ messages, direction: "output", providerMetadata: "strip" });
+
+        expect(Array.isArray(result.messages[0]?.content)).toBe(true);
+        expect(typeof result.messages[0]?.content).not.toBe("string");
+      });
+
+      it("should output tool message content as array", () => {
+        const messages: GenAIMessage[] = [
+          {
+            role: "tool",
+            parts: [
+              {
+                type: "tool_call_response",
+                id: "call-1",
+                response: "result",
+                _provider_metadata: { _known_fields: { toolName: "test" } },
+              },
+            ],
+          },
+        ];
+
+        const result = PromptlSpecification.fromGenAI({ messages, direction: "output", providerMetadata: "strip" });
+
+        expect(Array.isArray(result.messages[0]?.content)).toBe(true);
+        expect(typeof result.messages[0]?.content).not.toBe("string");
+      });
+
+      it("should output content as array even for single text part", () => {
+        const messages: GenAIMessage[] = [{ role: "user", parts: [{ type: "text", content: "Single text" }] }];
+
+        const result = PromptlSpecification.fromGenAI({ messages, direction: "output", providerMetadata: "strip" });
+
+        expect(Array.isArray(result.messages[0]?.content)).toBe(true);
+        expect(result.messages[0]?.content).toHaveLength(1);
+        expect(result.messages[0]?.content[0]).toEqual({ type: "text", text: "Single text" });
+      });
+
+      it("should output content as array for all messages in a conversation", () => {
+        const messages: GenAIMessage[] = [
+          { role: "system", parts: [{ type: "text", content: "System" }] },
+          { role: "user", parts: [{ type: "text", content: "User" }] },
+          { role: "assistant", parts: [{ type: "text", content: "Assistant" }] },
+        ];
+
+        const result = PromptlSpecification.fromGenAI({ messages, direction: "output", providerMetadata: "strip" });
+
+        for (const message of result.messages) {
+          expect(Array.isArray(message.content)).toBe(true);
+          expect(typeof message.content).not.toBe("string");
+        }
+      });
+
+      it("should output empty array for message with no parts", () => {
+        const messages: GenAIMessage[] = [{ role: "user", parts: [] }];
+
+        const result = PromptlSpecification.fromGenAI({ messages, direction: "output", providerMetadata: "strip" });
+
+        expect(Array.isArray(result.messages[0]?.content)).toBe(true);
+        expect(result.messages[0]?.content).toHaveLength(0);
+      });
+    });
+  });
+
   describe("edge cases", () => {
     it("should handle empty content array", () => {
       const messages: PromptlMessage[] = [{ role: "user", content: [] }];
