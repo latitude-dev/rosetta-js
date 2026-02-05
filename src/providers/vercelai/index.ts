@@ -26,6 +26,7 @@ import {
   binaryToBase64,
   extractExtraFields,
   getKnownFields,
+  getPartsMetadata,
   getUrlString,
   inferModality,
   isUrl,
@@ -579,6 +580,17 @@ function genAIMessageToVercelAI(
   // Helper to apply metadata mode to a message
   const applyMode = <T extends object>(msg: T): T => applyMetadataMode(msg, msgMetadata, mode, true) as T;
 
+  // Helper to check if any part has metadata that should be preserved
+  const hasPartMetadata = () =>
+    message.parts.some((p) => {
+      const meta = readMetadata(p as unknown as Record<string, unknown>);
+      return meta && Object.keys(meta).length > 0;
+    });
+
+  // Helper to determine if we should collapse single text part to string
+  // Only collapse if mode is "strip" OR no parts have metadata
+  const shouldCollapseToString = () => mode === "strip" || !hasPartMetadata();
+
   // Handle system messages
   if (message.role === "system") {
     // Extract text content
@@ -587,8 +599,23 @@ function genAIMessageToVercelAI(
       .map((p) => (p as { content: string }).content)
       .join("\n");
 
+    // System messages must use string content, so collect part metadata into _partsMetadata
+    let combinedMeta = msgMetadata ? { ...msgMetadata } : undefined;
+    let partsMetadata: Record<string, unknown> | undefined;
+    for (const part of message.parts.filter((p) => p.type === "text")) {
+      const partMeta = readMetadata(part as unknown as Record<string, unknown>);
+      if (partMeta && Object.keys(partMeta).length > 0) {
+        partsMetadata = { ...partsMetadata, ...partMeta };
+      }
+    }
+    if (partsMetadata) {
+      combinedMeta = { ...combinedMeta, _partsMetadata: partsMetadata };
+    }
+
+    const applyModeCombined = <T extends object>(msg: T): T => applyMetadataMode(msg, combinedMeta, mode, true) as T;
+
     return [
-      applyMode({
+      applyModeCombined({
         role: "system",
         content: textContent,
       } as VercelAISystemMessage),
@@ -610,6 +637,13 @@ function genAIMessageToVercelAI(
       return [];
     }
 
+    // Apply _partsMetadata to the first tool part if present
+    const partsMetadata = getPartsMetadata(msgMetadata);
+    if (partsMetadata && toolParts.length > 0) {
+      // biome-ignore lint/style/noNonNullAssertion: length check guarantees element exists
+      toolParts[0] = applyMetadataMode(toolParts[0]!, partsMetadata, mode, true) as VercelAIPart;
+    }
+
     return [
       applyMode({
         role: "tool",
@@ -629,14 +663,23 @@ function genAIMessageToVercelAI(
       }
     }
 
-    // If only one text part, use string content
-    if (userParts.length === 1 && userParts[0]?.type === "text") {
+    // Check for _partsMetadata - if present, we need array content to apply it
+    const partsMetadata = getPartsMetadata(msgMetadata);
+
+    // If only one text part and no metadata to preserve (including _partsMetadata), use string content
+    if (userParts.length === 1 && userParts[0]?.type === "text" && shouldCollapseToString() && !partsMetadata) {
       return [
         applyMode({
           role: "user",
           content: (userParts[0] as { text: string }).text,
         } as VercelAIUserMessage),
       ];
+    }
+
+    // Apply _partsMetadata to the first user part if present
+    if (partsMetadata && userParts.length > 0) {
+      // biome-ignore lint/style/noNonNullAssertion: length check guarantees element exists
+      userParts[0] = applyMetadataMode(userParts[0]!, partsMetadata, mode, true) as VercelAIPart;
     }
 
     return [
@@ -658,14 +701,28 @@ function genAIMessageToVercelAI(
       }
     }
 
-    // If only one text part, use string content
-    if (assistantParts.length === 1 && assistantParts[0]?.type === "text") {
+    // Check for _partsMetadata - if present, we need array content to apply it
+    const partsMetadata = getPartsMetadata(msgMetadata);
+
+    // If only one text part and no metadata to preserve (including _partsMetadata), use string content
+    if (
+      assistantParts.length === 1 &&
+      assistantParts[0]?.type === "text" &&
+      shouldCollapseToString() &&
+      !partsMetadata
+    ) {
       return [
         applyMode({
           role: "assistant",
           content: (assistantParts[0] as { text: string }).text,
         } as VercelAIAssistantMessage),
       ];
+    }
+
+    // Apply _partsMetadata to the first assistant part if present
+    if (partsMetadata && assistantParts.length > 0) {
+      // biome-ignore lint/style/noNonNullAssertion: length check guarantees element exists
+      assistantParts[0] = applyMetadataMode(assistantParts[0]!, partsMetadata, mode, true) as VercelAIPart;
     }
 
     return [
@@ -682,6 +739,13 @@ function genAIMessageToVercelAI(
     .map((p) => ({ type: "text" as const, text: (p as { content: string }).content }));
 
   if (textParts.length > 0) {
+    // Apply _partsMetadata to the first text part if present
+    const partsMetadata = getPartsMetadata(msgMetadata);
+    if (partsMetadata) {
+      // biome-ignore lint/style/noNonNullAssertion: length check guarantees element exists
+      textParts[0] = applyMetadataMode(textParts[0]!, partsMetadata, mode, true) as (typeof textParts)[0];
+    }
+
     return [
       applyMode({
         role: "user",

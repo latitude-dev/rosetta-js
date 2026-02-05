@@ -416,6 +416,128 @@ describe("GenAISpecification", () => {
     });
   });
 
+  describe("_partsMetadata restoration", () => {
+    const sourceMap = [{ start: 0, end: 10, identifier: "test" }];
+
+    it("should extract _parts_metadata and apply to first part in passthrough mode", () => {
+      const messages: GenAIMessage[] = [
+        {
+          role: "user",
+          parts: [{ type: "text", content: "Hello" }],
+          _provider_metadata: { _parts_metadata: { _promptlSourceMap: sourceMap } },
+        },
+      ];
+
+      const result = GenAISpecification.fromGenAI?.({
+        messages,
+        direction: "output",
+        providerMetadata: "passthrough",
+      });
+
+      // _parts_metadata should be extracted and applied to first part
+      expect(result?.messages[0]?.parts[0]).toHaveProperty("_promptlSourceMap", sourceMap);
+    });
+
+    it("should extract _partsMetadata (camelCase) and apply to first part in passthrough mode", () => {
+      const messages: GenAIMessage[] = [
+        {
+          role: "user",
+          parts: [{ type: "text", content: "Hello" }],
+          _provider_metadata: { _partsMetadata: { _promptlSourceMap: sourceMap } },
+        },
+      ];
+
+      const result = GenAISpecification.fromGenAI?.({
+        messages,
+        direction: "output",
+        providerMetadata: "passthrough",
+      });
+
+      // Should handle camelCase version as well
+      expect(result?.messages[0]?.parts[0]).toHaveProperty("_promptlSourceMap", sourceMap);
+    });
+
+    it("should extract _parts_metadata and apply to first part in preserve mode", () => {
+      const messages: GenAIMessage[] = [
+        {
+          role: "user",
+          parts: [{ type: "text", content: "Hello" }],
+          _provider_metadata: { _parts_metadata: { _promptlSourceMap: sourceMap } },
+        },
+      ];
+
+      const result = GenAISpecification.fromGenAI?.({
+        messages,
+        direction: "output",
+        providerMetadata: "preserve",
+      });
+
+      // _parts_metadata should be extracted and applied to first part inside _provider_metadata (snake_case)
+      const partMeta = result?.messages[0]?.parts[0]?._provider_metadata as { _promptlSourceMap?: unknown } | undefined;
+      expect(partMeta?._promptlSourceMap).toEqual(sourceMap);
+    });
+
+    it("should not apply _parts_metadata in strip mode", () => {
+      const messages: GenAIMessage[] = [
+        {
+          role: "user",
+          parts: [{ type: "text", content: "Hello" }],
+          _provider_metadata: { _parts_metadata: { _promptlSourceMap: sourceMap } },
+        },
+      ];
+
+      const result = GenAISpecification.fromGenAI?.({
+        messages,
+        direction: "output",
+        providerMetadata: "strip",
+      });
+
+      // No metadata should be applied in strip mode
+      expect((result?.messages[0]?.parts[0] as { _promptlSourceMap?: unknown })._promptlSourceMap).toBeUndefined();
+      expect(result?.messages[0]?.parts[0]?._provider_metadata).toBeUndefined();
+    });
+
+    it("should apply _parts_metadata only to first part when multiple parts exist", () => {
+      const messages: GenAIMessage[] = [
+        {
+          role: "user",
+          parts: [
+            { type: "text", content: "Hello" },
+            { type: "text", content: "World" },
+          ],
+          _provider_metadata: { _parts_metadata: { _promptlSourceMap: sourceMap } },
+        },
+      ];
+
+      const result = GenAISpecification.fromGenAI?.({
+        messages,
+        direction: "output",
+        providerMetadata: "passthrough",
+      });
+
+      // Only first part should have the metadata
+      expect((result?.messages[0]?.parts[0] as { _promptlSourceMap?: unknown })._promptlSourceMap).toEqual(sourceMap);
+      expect((result?.messages[0]?.parts[1] as { _promptlSourceMap?: unknown })._promptlSourceMap).toBeUndefined();
+    });
+
+    it("should not fail when _parts_metadata is not present", () => {
+      const messages: GenAIMessage[] = [
+        {
+          role: "user",
+          parts: [{ type: "text", content: "Hello" }],
+        },
+      ];
+
+      const result = GenAISpecification.fromGenAI?.({
+        messages,
+        direction: "output",
+        providerMetadata: "passthrough",
+      });
+
+      expect(result?.messages[0]?.parts[0]).toEqual({ type: "text", content: "Hello" });
+    });
+  });
+
   describe("passthrough - unknown fields preservation", () => {
     it("should preserve unknown fields on messages during parsing", () => {
       const message = {

@@ -109,6 +109,20 @@ export function getKnownFields(metadata: Record<string, unknown> | undefined): K
 }
 
 /**
+ * Extracts parts metadata from message metadata, checking both casings.
+ * Parts metadata is used to preserve part-level metadata when converting to providers
+ * that require string content (e.g., VercelAI system messages).
+ *
+ * @param metadata - The message metadata to extract from
+ * @returns The parts metadata object, or undefined if not present
+ */
+export function getPartsMetadata(metadata: Record<string, unknown> | undefined): Record<string, unknown> | undefined {
+  if (!metadata) return undefined;
+  // biome-ignore lint/complexity/useLiteralKeys: required for index signature access
+  return (metadata["_parts_metadata"] ?? metadata["_partsMetadata"]) as Record<string, unknown> | undefined;
+}
+
+/**
  * Stores metadata on a GenAI entity, merging with any existing metadata.
  * This is used in toGenAI to build the _provider_metadata field.
  *
@@ -176,12 +190,22 @@ export function applyMetadataMode<T extends object>(
       // Add metadata field with target provider's casing
       const metadataKey = useCamelCase ? "_providerMetadata" : "_provider_metadata";
       const knownFieldsKey = useCamelCase ? "_knownFields" : "_known_fields";
+      const partsMetadataKey = useCamelCase ? "_partsMetadata" : "_parts_metadata";
 
-      // Normalize the known fields key in the metadata
-      const { _known_fields, _knownFields, ...rest } = metadata;
+      // Normalize the known fields and parts metadata keys in the metadata
+      const { _known_fields, _knownFields, _parts_metadata, _partsMetadata, ...rest } = metadata;
       const knownFields = _known_fields ?? _knownFields;
+      const partsMetadata = _parts_metadata ?? _partsMetadata;
       const hasKnownFields = knownFields && Object.keys(knownFields as object).length > 0;
-      const normalizedMetadata = hasKnownFields ? { ...rest, [knownFieldsKey]: knownFields } : rest;
+      const hasPartsMetadata = partsMetadata && Object.keys(partsMetadata as object).length > 0;
+
+      const normalizedMetadata: Record<string, unknown> = { ...rest };
+      if (hasKnownFields) {
+        normalizedMetadata[knownFieldsKey] = knownFields;
+      }
+      if (hasPartsMetadata) {
+        normalizedMetadata[partsMetadataKey] = partsMetadata;
+      }
 
       // Only add metadata field if there's something to store
       if (Object.keys(normalizedMetadata).length === 0) return entity;
@@ -189,9 +213,10 @@ export function applyMetadataMode<T extends object>(
     }
 
     case "passthrough": {
-      // Spread all fields EXCEPT known fields (either casing)
-      const { _known_fields, _knownFields, ...extraFields } = metadata;
-      // Only spread if there are extra fields
+      // Spread all extra fields EXCEPT known fields and parts metadata (either casing)
+      // _partsMetadata should be restored to parts by the provider's fromGenAI, not spread at entity level
+      const { _known_fields, _knownFields, _parts_metadata, _partsMetadata, ...extraFields } = metadata;
+      // Only spread if there are extra fields to add
       if (Object.keys(extraFields).length === 0) return entity;
       return { ...entity, ...extraFields };
     }

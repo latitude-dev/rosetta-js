@@ -18,7 +18,7 @@ import {
   type ProviderSpecification,
   type ProviderToGenAIArgs,
 } from "$package/providers/provider";
-import { applyMetadataMode, type ProviderMetadataMode, readMetadata } from "$package/utils";
+import { applyMetadataMode, getPartsMetadata, type ProviderMetadataMode, readMetadata } from "$package/utils";
 
 export const GenAISpecification = {
   provider: Provider.GenAI,
@@ -52,13 +52,13 @@ export const GenAISpecification = {
     const filtered: GenAIMessage[] = [];
 
     for (const message of messages) {
+      // Apply metadata mode to message and its parts (handles _partsMetadata restoration)
+      const transformed = applyMetadataModeToGenAIMessage(message, providerMetadata);
+
       if (message.role === "system") {
-        // Apply metadata mode to system parts
-        const transformedParts = message.parts.map((part) => applyMetadataModeToGenAI(part, providerMetadata));
-        system.push(...transformedParts);
+        system.push(...transformed.parts);
       } else {
-        // Apply metadata mode to message and its parts
-        filtered.push(applyMetadataModeToGenAIMessage(message, providerMetadata));
+        filtered.push(transformed);
       }
     }
 
@@ -81,6 +81,14 @@ function applyMetadataModeToGenAI(part: GenAIPart, mode: ProviderMetadataMode): 
 function applyMetadataModeToGenAIMessage(message: GenAIMessage, mode: ProviderMetadataMode): GenAIMessage {
   const msgMetadata = readMetadata(message as unknown as Record<string, unknown>);
   const transformedParts = message.parts.map((part) => applyMetadataModeToGenAI(part, mode));
+
+  // Extract _partsMetadata from message metadata and apply to first part
+  // This restores part-level metadata that was merged when converting to string content
+  const partsMetadata = getPartsMetadata(msgMetadata);
+  if (partsMetadata && transformedParts.length > 0) {
+    // biome-ignore lint/style/noNonNullAssertion: length check guarantees element exists
+    transformedParts[0] = applyMetadataMode(transformedParts[0]!, partsMetadata, mode, false);
+  }
 
   // Remove existing metadata keys before applying mode
   const { _provider_metadata, _providerMetadata, parts, ...baseMessage } = message as GenAIMessage & {

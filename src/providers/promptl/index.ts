@@ -23,6 +23,7 @@ import {
   applyMetadataMode,
   extractExtraFields,
   getKnownFields,
+  getPartsMetadata,
   isUrlString,
   type ProviderMetadataMode,
   readMetadata,
@@ -630,6 +631,16 @@ function genAIMessageToPromptl(
       }
     }
 
+    // Apply _partsMetadata to the first tool message's content if present
+    const partsMetadata = getPartsMetadata(msgMetadata);
+    if (partsMetadata && toolMessages.length > 0) {
+      const firstMsg = toolMessages[0] as PromptlMessage & { content: PromptlContent[] };
+      if (firstMsg.content.length > 0) {
+        // biome-ignore lint/style/noNonNullAssertion: length check guarantees element exists
+        firstMsg.content[0] = applyMetadataMode(firstMsg.content[0]!, partsMetadata, mode, true) as PromptlContent;
+      }
+    }
+
     return toolMessages.length > 0 ? toolMessages : [];
   }
 
@@ -657,8 +668,25 @@ function genAIMessageToPromptl(
           }
         }
         if (content.length > 0) {
+          // Extract _partsMetadata from message metadata and apply to first content part
+          const partsMetadata = getPartsMetadata(msgMetadata);
+          if (partsMetadata) {
+            // biome-ignore lint/style/noNonNullAssertion: length check guarantees element exists
+            content[0] = applyMetadataMode(content[0]!, partsMetadata, mode, true) as PromptlContent;
+          }
+
           const assistantMsg = { role: "assistant" as const, content };
           result.unshift(applyMetadataMode(assistantMsg, msgMetadata, mode, true) as PromptlMessage);
+        }
+      } else {
+        // No other parts - apply _partsMetadata to the first tool message's content
+        const partsMetadata = getPartsMetadata(msgMetadata);
+        if (partsMetadata && result.length > 0) {
+          const firstMsg = result[0] as PromptlMessage & { content: PromptlContent[] };
+          if (firstMsg.content.length > 0) {
+            // biome-ignore lint/style/noNonNullAssertion: length check guarantees element exists
+            firstMsg.content[0] = applyMetadataMode(firstMsg.content[0]!, partsMetadata, mode, true) as PromptlContent;
+          }
         }
       }
 
@@ -673,6 +701,14 @@ function genAIMessageToPromptl(
     if (converted) {
       content.push(converted);
     }
+  }
+
+  // Extract _partsMetadata from message metadata and apply to first content part
+  // This restores part-level metadata that was merged when converting to string content
+  const partsMetadata = getPartsMetadata(msgMetadata);
+  if (partsMetadata && content.length > 0) {
+    // biome-ignore lint/style/noNonNullAssertion: length check guarantees element exists
+    content[0] = applyMetadataMode(content[0]!, partsMetadata, mode, true) as PromptlContent;
   }
 
   // Map role - Promptl only accepts specific roles

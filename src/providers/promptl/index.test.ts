@@ -1543,6 +1543,234 @@ describe("PromptlSpecification", () => {
         expect(content[1]?.type).toBe("image");
       });
     });
+
+    describe("_partsMetadata restoration", () => {
+      const sourceMap = [{ start: 0, end: 10, identifier: "test" }];
+
+      it("should extract _partsMetadata and apply to first content part in passthrough mode", () => {
+        const messages: GenAIMessage[] = [
+          {
+            role: "system",
+            parts: [{ type: "text", content: "Be helpful" }],
+            _provider_metadata: { _partsMetadata: { _promptlSourceMap: sourceMap } },
+          },
+        ];
+
+        const result = PromptlSpecification.fromGenAI({
+          messages,
+          direction: "output",
+          providerMetadata: "passthrough",
+        });
+
+        // _partsMetadata should be extracted and applied to first content part
+        expect(result.messages[0]?.content).toHaveLength(1);
+        expect((result.messages[0]?.content[0] as { _promptlSourceMap?: unknown })._promptlSourceMap).toEqual(
+          sourceMap,
+        );
+      });
+
+      it("should extract _partsMetadata and apply to first content part in preserve mode", () => {
+        const messages: GenAIMessage[] = [
+          {
+            role: "system",
+            parts: [{ type: "text", content: "Be helpful" }],
+            _provider_metadata: { _partsMetadata: { _promptlSourceMap: sourceMap } },
+          },
+        ];
+
+        const result = PromptlSpecification.fromGenAI({
+          messages,
+          direction: "output",
+          providerMetadata: "preserve",
+        });
+
+        // _partsMetadata should be extracted and applied to first content part inside _providerMetadata
+        expect(result.messages[0]?.content).toHaveLength(1);
+        const content = result.messages[0]?.content[0] as {
+          _providerMetadata?: { _promptlSourceMap?: unknown };
+        };
+        expect(content._providerMetadata?._promptlSourceMap).toEqual(sourceMap);
+      });
+
+      it("should not apply _partsMetadata in strip mode", () => {
+        const messages: GenAIMessage[] = [
+          {
+            role: "system",
+            parts: [{ type: "text", content: "Be helpful" }],
+            _provider_metadata: { _partsMetadata: { _promptlSourceMap: sourceMap } },
+          },
+        ];
+
+        const result = PromptlSpecification.fromGenAI({
+          messages,
+          direction: "output",
+          providerMetadata: "strip",
+        });
+
+        // No metadata should be applied in strip mode
+        expect(result.messages[0]?.content).toHaveLength(1);
+        expect((result.messages[0]?.content[0] as { _promptlSourceMap?: unknown })._promptlSourceMap).toBeUndefined();
+        expect((result.messages[0]?.content[0] as { _providerMetadata?: unknown })._providerMetadata).toBeUndefined();
+      });
+
+      it("should handle _parts_metadata (snake_case) from GenAI format", () => {
+        const messages: GenAIMessage[] = [
+          {
+            role: "user",
+            parts: [{ type: "text", content: "Hello" }],
+            _provider_metadata: { _parts_metadata: { _promptlSourceMap: sourceMap } },
+          },
+        ];
+
+        const result = PromptlSpecification.fromGenAI({
+          messages,
+          direction: "output",
+          providerMetadata: "passthrough",
+        });
+
+        // Should handle snake_case version as well
+        expect((result.messages[0]?.content[0] as { _promptlSourceMap?: unknown })._promptlSourceMap).toEqual(
+          sourceMap,
+        );
+      });
+
+      it("should apply _partsMetadata only to first content part when multiple parts exist", () => {
+        const messages: GenAIMessage[] = [
+          {
+            role: "user",
+            parts: [
+              { type: "text", content: "Hello" },
+              { type: "text", content: "World" },
+            ],
+            _provider_metadata: { _partsMetadata: { _promptlSourceMap: sourceMap } },
+          },
+        ];
+
+        const result = PromptlSpecification.fromGenAI({
+          messages,
+          direction: "output",
+          providerMetadata: "passthrough",
+        });
+
+        // Only first part should have the metadata
+        expect((result.messages[0]?.content[0] as { _promptlSourceMap?: unknown })._promptlSourceMap).toEqual(
+          sourceMap,
+        );
+        expect((result.messages[0]?.content[1] as { _promptlSourceMap?: unknown })._promptlSourceMap).toBeUndefined();
+      });
+
+      it("should not fail when _partsMetadata is not present", () => {
+        const messages: GenAIMessage[] = [
+          {
+            role: "system",
+            parts: [{ type: "text", content: "Be helpful" }],
+          },
+        ];
+
+        const result = PromptlSpecification.fromGenAI({
+          messages,
+          direction: "output",
+          providerMetadata: "passthrough",
+        });
+
+        expect(result.messages[0]?.content).toHaveLength(1);
+        expect(result.messages[0]?.content[0]).toEqual({ type: "text", text: "Be helpful" });
+      });
+
+      it("should apply _partsMetadata to first tool message content in passthrough mode", () => {
+        const messages: GenAIMessage[] = [
+          {
+            role: "tool",
+            parts: [{ type: "tool_call_response", id: "call_1", response: "Result" }],
+            _provider_metadata: { _partsMetadata: { _promptlSourceMap: sourceMap } },
+          },
+        ];
+
+        const result = PromptlSpecification.fromGenAI({
+          messages,
+          direction: "output",
+          providerMetadata: "passthrough",
+        });
+
+        // Tool message should have metadata applied to first content part
+        expect(result.messages).toHaveLength(1);
+        expect(result.messages[0]?.role).toBe("tool");
+        const content = result.messages[0]?.content[0] as { _promptlSourceMap?: unknown };
+        expect(content._promptlSourceMap).toEqual(sourceMap);
+      });
+
+      it("should apply _partsMetadata to first tool message content in preserve mode", () => {
+        const messages: GenAIMessage[] = [
+          {
+            role: "tool",
+            parts: [{ type: "tool_call_response", id: "call_1", response: "Result" }],
+            _provider_metadata: { _partsMetadata: { _promptlSourceMap: sourceMap } },
+          },
+        ];
+
+        const result = PromptlSpecification.fromGenAI({
+          messages,
+          direction: "output",
+          providerMetadata: "preserve",
+        });
+
+        // Tool message should have metadata in _providerMetadata on first content part
+        expect(result.messages).toHaveLength(1);
+        const content = result.messages[0]?.content[0] as {
+          _providerMetadata?: { _promptlSourceMap?: unknown };
+        };
+        expect(content._providerMetadata?._promptlSourceMap).toEqual(sourceMap);
+      });
+
+      it("should apply _partsMetadata to first tool message when assistant has only tool_call_response parts", () => {
+        const messages: GenAIMessage[] = [
+          {
+            role: "assistant",
+            parts: [{ type: "tool_call_response", id: "call_1", response: "Result" }],
+            _provider_metadata: { _partsMetadata: { _promptlSourceMap: sourceMap } },
+          },
+        ];
+
+        const result = PromptlSpecification.fromGenAI({
+          messages,
+          direction: "output",
+          providerMetadata: "passthrough",
+        });
+
+        // Should create a tool message with metadata on first content part
+        expect(result.messages).toHaveLength(1);
+        expect(result.messages[0]?.role).toBe("tool");
+        const content = result.messages[0]?.content[0] as { _promptlSourceMap?: unknown };
+        expect(content._promptlSourceMap).toEqual(sourceMap);
+      });
+
+      it("should apply _partsMetadata to first tool message when multiple tool_call_response parts exist", () => {
+        const messages: GenAIMessage[] = [
+          {
+            role: "tool",
+            parts: [
+              { type: "tool_call_response", id: "call_1", response: "Result 1" },
+              { type: "tool_call_response", id: "call_2", response: "Result 2" },
+            ],
+            _provider_metadata: { _partsMetadata: { _promptlSourceMap: sourceMap } },
+          },
+        ];
+
+        const result = PromptlSpecification.fromGenAI({
+          messages,
+          direction: "output",
+          providerMetadata: "passthrough",
+        });
+
+        // Should create two tool messages, only first should have metadata
+        expect(result.messages).toHaveLength(2);
+        const firstContent = result.messages[0]?.content[0] as { _promptlSourceMap?: unknown };
+        expect(firstContent._promptlSourceMap).toEqual(sourceMap);
+
+        const secondContent = result.messages[1]?.content[0] as { _promptlSourceMap?: unknown };
+        expect(secondContent._promptlSourceMap).toBeUndefined();
+      });
+    });
   });
 
   describe("round-trip conversion", () => {

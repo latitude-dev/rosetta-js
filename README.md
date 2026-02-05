@@ -368,12 +368,18 @@ const message: GenAIMessage = {
         toolName: "get_weather",  // Tool name (GenAI schema doesn't include it)
         isError: true,            // Error indicator
       },
+      // Parts metadata - collapsed part-level metadata (for providers with string-only content)
+      _partsMetadata: {
+        _promptlSourceMap: [...], // Part metadata moved to message level
+      },
       // Extra fields - any other provider-specific data
       annotations: [...],
     },
   }],
 };
 ```
+
+**Note on `_partsMetadata`**: Some providers require string content for certain message types (e.g., VercelAI system messages). When translating to these providers, part-level metadata is collected and stored in `_partsMetadata` at the message level. When translating back to a provider that supports structured content, this metadata is automatically restored to the first content part. **Important**: In passthrough mode, if the target provider doesn't support structured content (like VercelAI system messages), part-level metadata stored in `_partsMetadata` will be lost. Use **preserve** mode if you need to retain this metadata through round-trips.
 
 #### Provider Metadata Mode
 

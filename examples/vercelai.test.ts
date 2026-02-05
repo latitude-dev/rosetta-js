@@ -7,7 +7,7 @@
 
 import { openai } from "@ai-sdk/openai";
 import { generateText } from "ai";
-import { Provider, translate } from "rosetta-ai";
+import { Provider, Translator, translate } from "rosetta-ai";
 import { describe, expect, it } from "vitest";
 import { z } from "zod";
 
@@ -525,6 +525,555 @@ describe("VercelAI E2E", () => {
 
       expect(backToPromptl.messages).toHaveLength(3);
       expect((backToPromptl.messages[2]?.content[0] as { toolName: string }).toolName).toBe("greet");
+    });
+  });
+
+  describe("metadata preservation (Promptl -> VercelAI with _promptlSourceMap)", () => {
+    const sourceMap = [{ start: 0, end: 10, identifier: "test" }];
+
+    describe("passthrough mode", () => {
+      const translator = new Translator({ providerMetadata: "passthrough" });
+
+      it("should preserve _promptlSourceMap on user message when translating Promptl to VercelAI", () => {
+        const promptlMessages = [
+          {
+            role: "user" as const,
+            content: [{ type: "text" as const, text: "Hello", _promptlSourceMap: sourceMap }],
+          },
+        ];
+
+        const result = translator.translate(promptlMessages, {
+          from: Provider.Promptl,
+          to: Provider.VercelAI,
+        });
+
+        // Content should be array to preserve part metadata
+        expect(Array.isArray(result.messages[0]?.content)).toBe(true);
+        const content = result.messages[0]?.content as Array<{
+          type: string;
+          text: string;
+          _promptlSourceMap?: unknown;
+        }>;
+        expect(content[0]?._promptlSourceMap).toEqual(sourceMap);
+      });
+
+      it("should lose _promptlSourceMap on system message in passthrough mode (string content)", () => {
+        const promptlMessages = [
+          {
+            role: "system" as const,
+            content: [{ type: "text" as const, text: "Be helpful", _promptlSourceMap: sourceMap }],
+          },
+        ];
+
+        const result = translator.translate(promptlMessages, {
+          from: Provider.Promptl,
+          to: Provider.VercelAI,
+        });
+
+        // System message uses string content, no parts to apply metadata to
+        // In passthrough mode, _partsMetadata is stripped (not spread), so metadata is lost
+        expect(result.messages[0]?.content).toBe("Be helpful");
+        expect((result.messages[0] as { _promptlSourceMap?: unknown })._promptlSourceMap).toBeUndefined();
+      });
+
+      it("should preserve _promptlSourceMap on assistant message when translating Promptl to VercelAI", () => {
+        const promptlMessages = [
+          {
+            role: "assistant" as const,
+            content: [{ type: "text" as const, text: "Response", _promptlSourceMap: sourceMap }],
+          },
+        ];
+
+        const result = translator.translate(promptlMessages, {
+          from: Provider.Promptl,
+          to: Provider.VercelAI,
+        });
+
+        // Content should be array to preserve part metadata
+        expect(Array.isArray(result.messages[0]?.content)).toBe(true);
+        const content = result.messages[0]?.content as Array<{
+          type: string;
+          text: string;
+          _promptlSourceMap?: unknown;
+        }>;
+        expect(content[0]?._promptlSourceMap).toEqual(sourceMap);
+      });
+    });
+
+    describe("preserve mode", () => {
+      const translator = new Translator({ providerMetadata: "preserve" });
+
+      it("should preserve _promptlSourceMap in _providerMetadata on user message", () => {
+        const promptlMessages = [
+          {
+            role: "user" as const,
+            content: [{ type: "text" as const, text: "Hello", _promptlSourceMap: sourceMap }],
+          },
+        ];
+
+        const result = translator.translate(promptlMessages, {
+          from: Provider.Promptl,
+          to: Provider.VercelAI,
+        });
+
+        // Content should be array to preserve part metadata
+        expect(Array.isArray(result.messages[0]?.content)).toBe(true);
+        const content = result.messages[0]?.content as Array<{
+          type: string;
+          text: string;
+          _providerMetadata?: { _promptlSourceMap?: unknown };
+        }>;
+        expect(content[0]?._providerMetadata?._promptlSourceMap).toEqual(sourceMap);
+      });
+
+      it("should preserve _promptlSourceMap in _providerMetadata._partsMetadata on system message", () => {
+        const promptlMessages = [
+          {
+            role: "system" as const,
+            content: [{ type: "text" as const, text: "Be helpful", _promptlSourceMap: sourceMap }],
+          },
+        ];
+
+        const result = translator.translate(promptlMessages, {
+          from: Provider.Promptl,
+          to: Provider.VercelAI,
+        });
+
+        // System message uses string content, part metadata is stored in _partsMetadata
+        expect(result.messages[0]?.content).toBe("Be helpful");
+        expect(
+          (result.messages[0] as { _providerMetadata?: { _partsMetadata?: { _promptlSourceMap?: unknown } } })
+            ._providerMetadata?._partsMetadata?._promptlSourceMap,
+        ).toEqual(sourceMap);
+      });
+    });
+  });
+
+  describe("round-trip metadata preservation (Promptl -> VercelAI -> Promptl)", () => {
+    const sourceMap = [{ start: 15, end: 25, identifier: "color" }];
+
+    describe("passthrough mode", () => {
+      const translator = new Translator({ providerMetadata: "passthrough" });
+
+      it("should preserve _promptlSourceMap through full round-trip for user message", () => {
+        const originalPromptl = [
+          {
+            role: "user" as const,
+            content: [{ type: "text" as const, text: "Why is the sky ?", _promptlSourceMap: sourceMap }],
+          },
+        ];
+
+        // Promptl -> VercelAI (passthrough)
+        const vercelAI = translator.translate(originalPromptl, {
+          from: Provider.Promptl,
+          to: Provider.VercelAI,
+        });
+
+        // Verify metadata is on VercelAI message
+        const vercelContent = vercelAI.messages[0]?.content as Array<{ _promptlSourceMap?: unknown }>;
+        expect(vercelContent[0]?._promptlSourceMap).toEqual(sourceMap);
+
+        // VercelAI -> Promptl (passthrough)
+        const backToPromptl = translator.translate(vercelAI.messages, {
+          from: Provider.VercelAI,
+          to: Provider.Promptl,
+        });
+
+        // Verify metadata survives full round-trip
+        const promptlContent = backToPromptl.messages[0]?.content as Array<{ _promptlSourceMap?: unknown }>;
+        expect(promptlContent[0]?._promptlSourceMap).toEqual(sourceMap);
+      });
+
+      it("should lose _promptlSourceMap through round-trip for system message in passthrough mode", () => {
+        const systemSourceMap = [{ start: 30, end: 30, identifier: "mode" }];
+        const originalPromptl = [
+          {
+            role: "system" as const,
+            content: [
+              { type: "text" as const, text: "Answer the following question :", _promptlSourceMap: systemSourceMap },
+            ],
+          },
+        ];
+
+        // Promptl -> VercelAI (passthrough)
+        const vercelAI = translator.translate(originalPromptl, {
+          from: Provider.Promptl,
+          to: Provider.VercelAI,
+        });
+
+        // System uses string content, _partsMetadata is stripped in passthrough, so metadata is lost
+        expect((vercelAI.messages[0] as { _promptlSourceMap?: unknown })._promptlSourceMap).toBeUndefined();
+
+        // VercelAI -> Promptl (passthrough)
+        const backToPromptl = translator.translate(vercelAI.messages, {
+          from: Provider.VercelAI,
+          to: Provider.Promptl,
+        });
+
+        // Metadata was lost in the Promptl -> VercelAI step
+        const sysMsg = backToPromptl.messages[0];
+        const msgLevelMeta = (sysMsg as { _promptlSourceMap?: unknown })._promptlSourceMap;
+        const contentLevelMeta = (sysMsg?.content[0] as { _promptlSourceMap?: unknown })?._promptlSourceMap;
+        expect(msgLevelMeta ?? contentLevelMeta).toBeUndefined();
+      });
+
+      it("should semi-preserve _promptlSourceMap through full round-trip for conversation", () => {
+        const systemMap = [{ start: 30, end: 30, identifier: "mode" }];
+        const userMap = [{ start: 15, end: 15, identifier: "color" }];
+
+        const originalPromptl = [
+          {
+            role: "system" as const,
+            content: [{ type: "text" as const, text: "Answer the following question :", _promptlSourceMap: systemMap }],
+          },
+          {
+            role: "user" as const,
+            content: [{ type: "text" as const, text: "Why is the sky ?", _promptlSourceMap: userMap }],
+          },
+        ];
+
+        // Promptl -> VercelAI (passthrough)
+        const vercelAI = translator.translate(originalPromptl, {
+          from: Provider.Promptl,
+          to: Provider.VercelAI,
+        });
+
+        // VercelAI -> Promptl (passthrough)
+        const backToPromptl = translator.translate(vercelAI.messages, {
+          from: Provider.VercelAI,
+          to: Provider.Promptl,
+        });
+
+        expect(backToPromptl.messages).toHaveLength(2);
+
+        // Check system message metadata
+        const systemContent = backToPromptl.messages[0]?.content as Array<{ _promptlSourceMap?: unknown }>;
+        expect(systemContent[0]?._promptlSourceMap).toBeUndefined();
+
+        // Check user message metadata
+        const userContent = backToPromptl.messages[1]?.content as Array<{ _promptlSourceMap?: unknown }>;
+        expect(userContent[0]?._promptlSourceMap).toEqual(userMap);
+      });
+    });
+
+    describe("preserve mode", () => {
+      const translator = new Translator({ providerMetadata: "preserve" });
+
+      it("should preserve _promptlSourceMap through full round-trip for user message", () => {
+        const originalPromptl = [
+          {
+            role: "user" as const,
+            content: [{ type: "text" as const, text: "Why is the sky ?", _promptlSourceMap: sourceMap }],
+          },
+        ];
+
+        // Promptl -> VercelAI (preserve)
+        const vercelAI = translator.translate(originalPromptl, {
+          from: Provider.Promptl,
+          to: Provider.VercelAI,
+        });
+
+        // Verify metadata is in _providerMetadata on VercelAI message
+        const vercelContent = vercelAI.messages[0]?.content as Array<{
+          _providerMetadata?: { _promptlSourceMap?: unknown };
+        }>;
+        expect(vercelContent[0]?._providerMetadata?._promptlSourceMap).toEqual(sourceMap);
+
+        // VercelAI -> Promptl (preserve)
+        const backToPromptl = translator.translate(vercelAI.messages, {
+          from: Provider.VercelAI,
+          to: Provider.Promptl,
+        });
+
+        // Verify metadata survives full round-trip (in _providerMetadata)
+        const promptlContent = backToPromptl.messages[0]?.content as Array<{
+          _providerMetadata?: { _promptlSourceMap?: unknown };
+        }>;
+        expect(promptlContent[0]?._providerMetadata?._promptlSourceMap).toEqual(sourceMap);
+      });
+
+      it("should preserve _promptlSourceMap through full round-trip for system message", () => {
+        const systemSourceMap = [{ start: 30, end: 30, identifier: "mode" }];
+        const originalPromptl = [
+          {
+            role: "system" as const,
+            content: [
+              { type: "text" as const, text: "Answer the following question :", _promptlSourceMap: systemSourceMap },
+            ],
+          },
+        ];
+
+        // Promptl -> VercelAI (preserve)
+        const vercelAI = translator.translate(originalPromptl, {
+          from: Provider.Promptl,
+          to: Provider.VercelAI,
+        });
+
+        // System uses string content, part metadata is stored in _providerMetadata._partsMetadata
+        expect(
+          (vercelAI.messages[0] as { _providerMetadata?: { _partsMetadata?: { _promptlSourceMap?: unknown } } })
+            ._providerMetadata?._partsMetadata?._promptlSourceMap,
+        ).toEqual(systemSourceMap);
+
+        // VercelAI -> Promptl (preserve)
+        const backToPromptl = translator.translate(vercelAI.messages, {
+          from: Provider.VercelAI,
+          to: Provider.Promptl,
+        });
+
+        // Metadata should be preserved at content level in _providerMetadata
+        const sysMsg = backToPromptl.messages[0];
+        const contentLevelMeta = (sysMsg?.content[0] as { _providerMetadata?: { _promptlSourceMap?: unknown } })
+          ?._providerMetadata?._promptlSourceMap;
+        expect(contentLevelMeta).toEqual(systemSourceMap);
+      });
+    });
+  });
+
+  describe("_partsMetadata round-trip (system messages)", () => {
+    const sourceMap = [{ start: 30, end: 30, identifier: "mode" }];
+
+    describe("passthrough mode", () => {
+      const translator = new Translator({ providerMetadata: "passthrough" });
+
+      it("should lose _promptlSourceMap for system messages in passthrough mode (no parts to restore to)", () => {
+        const originalPromptl = [
+          {
+            role: "system" as const,
+            content: [{ type: "text" as const, text: "Answer the following question:", _promptlSourceMap: sourceMap }],
+          },
+        ];
+
+        // Promptl -> VercelAI
+        const vercelAI = translator.translate(originalPromptl, {
+          from: Provider.Promptl,
+          to: Provider.VercelAI,
+        });
+
+        // System message uses string content, _partsMetadata is stripped in passthrough mode
+        expect(typeof vercelAI.messages[0]?.content).toBe("string");
+        expect((vercelAI.messages[0] as { _promptlSourceMap?: unknown })._promptlSourceMap).toBeUndefined();
+
+        // VercelAI -> Promptl
+        const backToPromptl = translator.translate(vercelAI.messages, {
+          from: Provider.VercelAI,
+          to: Provider.Promptl,
+        });
+
+        // Metadata was lost in the Promptl -> VercelAI step
+        expect(backToPromptl.messages[0]?.content).toHaveLength(1);
+        const content = backToPromptl.messages[0]?.content[0] as { _promptlSourceMap?: unknown };
+        expect(content._promptlSourceMap).toBeUndefined();
+      });
+    });
+
+    describe("preserve mode", () => {
+      const translator = new Translator({ providerMetadata: "preserve" });
+
+      it("should restore _promptlSourceMap from _partsMetadata to first content part after round-trip", () => {
+        const originalPromptl = [
+          {
+            role: "system" as const,
+            content: [{ type: "text" as const, text: "Answer the following question:", _promptlSourceMap: sourceMap }],
+          },
+        ];
+
+        // Promptl -> VercelAI
+        const vercelAI = translator.translate(originalPromptl, {
+          from: Provider.Promptl,
+          to: Provider.VercelAI,
+        });
+
+        // System message uses string content, so metadata is in _providerMetadata._partsMetadata at message level
+        expect(typeof vercelAI.messages[0]?.content).toBe("string");
+        const msgMeta = (
+          vercelAI.messages[0] as { _providerMetadata?: { _partsMetadata?: { _promptlSourceMap?: unknown } } }
+        )._providerMetadata;
+        expect(msgMeta?._partsMetadata?._promptlSourceMap).toEqual(sourceMap);
+
+        // VercelAI -> Promptl
+        const backToPromptl = translator.translate(vercelAI.messages, {
+          from: Provider.VercelAI,
+          to: Provider.Promptl,
+        });
+
+        // Metadata should be restored to first content part inside _providerMetadata
+        expect(backToPromptl.messages[0]?.content).toHaveLength(1);
+        const content = backToPromptl.messages[0]?.content[0] as {
+          _providerMetadata?: { _promptlSourceMap?: unknown };
+        };
+        expect(content._providerMetadata?._promptlSourceMap).toEqual(sourceMap);
+      });
+    });
+  });
+
+  describe("preserve-then-passthrough round-trip (Promptl -> VercelAI [preserve] -> Promptl [passthrough])", () => {
+    it("should preserve user message metadata exactly through preserve-then-passthrough round-trip", () => {
+      const sourceMap = [{ start: 0, end: 10, identifier: "test" }];
+      const originalPromptl = [
+        {
+          role: "user" as const,
+          content: [{ type: "text" as const, text: "Hello", _promptlSourceMap: sourceMap }],
+        },
+      ];
+
+      // Promptl -> VercelAI (preserve mode: stores metadata in _providerMetadata)
+      const preserveTranslator = new Translator({ providerMetadata: "preserve" });
+      const vercelAI = preserveTranslator.translate(originalPromptl, {
+        from: Provider.Promptl,
+        to: Provider.VercelAI,
+      });
+
+      // VercelAI -> Promptl (passthrough mode: spreads _providerMetadata back to entity level)
+      const passthroughTranslator = new Translator({ providerMetadata: "passthrough" });
+      const backToPromptl = passthroughTranslator.translate(vercelAI.messages, {
+        from: Provider.VercelAI,
+        to: Provider.Promptl,
+      });
+
+      // The final message should have metadata at the same level as the original
+      expect(backToPromptl.messages[0]?.content).toHaveLength(1);
+      const finalContent = backToPromptl.messages[0]?.content[0] as { _promptlSourceMap?: unknown };
+      expect(finalContent._promptlSourceMap).toEqual(sourceMap);
+    });
+
+    it("should preserve assistant message metadata exactly through preserve-then-passthrough round-trip", () => {
+      const sourceMap = [{ start: 0, end: 15, identifier: "response" }];
+      const originalPromptl = [
+        {
+          role: "assistant" as const,
+          content: [{ type: "text" as const, text: "Hi there!", _promptlSourceMap: sourceMap }],
+        },
+      ];
+
+      // Promptl -> VercelAI (preserve)
+      const preserveTranslator = new Translator({ providerMetadata: "preserve" });
+      const vercelAI = preserveTranslator.translate(originalPromptl, {
+        from: Provider.Promptl,
+        to: Provider.VercelAI,
+      });
+
+      // VercelAI -> Promptl (passthrough)
+      const passthroughTranslator = new Translator({ providerMetadata: "passthrough" });
+      const backToPromptl = passthroughTranslator.translate(vercelAI.messages, {
+        from: Provider.VercelAI,
+        to: Provider.Promptl,
+      });
+
+      // The final message should have metadata at the same level as the original
+      expect(backToPromptl.messages[0]?.content).toHaveLength(1);
+      const finalContent = backToPromptl.messages[0]?.content[0] as { _promptlSourceMap?: unknown };
+      expect(finalContent._promptlSourceMap).toEqual(sourceMap);
+    });
+
+    it("should preserve system message metadata through preserve-then-passthrough round-trip", () => {
+      const sourceMap = [{ start: 0, end: 20, identifier: "system" }];
+      const originalPromptl = [
+        {
+          role: "system" as const,
+          content: [{ type: "text" as const, text: "Be helpful", _promptlSourceMap: sourceMap }],
+        },
+      ];
+
+      // Promptl -> VercelAI (preserve)
+      // System messages use string content, so part metadata is stored in _partsMetadata
+      const preserveTranslator = new Translator({ providerMetadata: "preserve" });
+      const vercelAI = preserveTranslator.translate(originalPromptl, {
+        from: Provider.Promptl,
+        to: Provider.VercelAI,
+      });
+
+      // VercelAI -> Promptl (passthrough)
+      // _partsMetadata is applied back to the first content part
+      const passthroughTranslator = new Translator({ providerMetadata: "passthrough" });
+      const backToPromptl = passthroughTranslator.translate(vercelAI.messages, {
+        from: Provider.VercelAI,
+        to: Provider.Promptl,
+      });
+
+      // The final message should have metadata restored to the content part
+      expect(backToPromptl.messages[0]?.content).toHaveLength(1);
+      const finalContent = backToPromptl.messages[0]?.content[0] as { _promptlSourceMap?: unknown };
+      expect(finalContent._promptlSourceMap).toEqual(sourceMap);
+    });
+
+    it("should preserve full conversation metadata through preserve-then-passthrough round-trip", () => {
+      const systemSourceMap = [{ start: 0, end: 10, identifier: "system" }];
+      const userSourceMap = [{ start: 0, end: 5, identifier: "user" }];
+      const assistantSourceMap = [{ start: 0, end: 8, identifier: "assistant" }];
+
+      const originalPromptl = [
+        {
+          role: "system" as const,
+          content: [{ type: "text" as const, text: "Be helpful", _promptlSourceMap: systemSourceMap }],
+        },
+        {
+          role: "user" as const,
+          content: [{ type: "text" as const, text: "Hello", _promptlSourceMap: userSourceMap }],
+        },
+        {
+          role: "assistant" as const,
+          content: [{ type: "text" as const, text: "Hi there!", _promptlSourceMap: assistantSourceMap }],
+        },
+      ];
+
+      // Promptl -> VercelAI (preserve)
+      const preserveTranslator = new Translator({ providerMetadata: "preserve" });
+      const vercelAI = preserveTranslator.translate(originalPromptl, {
+        from: Provider.Promptl,
+        to: Provider.VercelAI,
+      });
+
+      // VercelAI -> Promptl (passthrough)
+      const passthroughTranslator = new Translator({ providerMetadata: "passthrough" });
+      const backToPromptl = passthroughTranslator.translate(vercelAI.messages, {
+        from: Provider.VercelAI,
+        to: Provider.Promptl,
+      });
+
+      // All messages should have their metadata restored
+      expect(backToPromptl.messages).toHaveLength(3);
+
+      const systemContent = backToPromptl.messages[0]?.content[0] as { _promptlSourceMap?: unknown };
+      expect(systemContent._promptlSourceMap).toEqual(systemSourceMap);
+
+      const userContent = backToPromptl.messages[1]?.content[0] as { _promptlSourceMap?: unknown };
+      expect(userContent._promptlSourceMap).toEqual(userSourceMap);
+
+      const assistantContent = backToPromptl.messages[2]?.content[0] as { _promptlSourceMap?: unknown };
+      expect(assistantContent._promptlSourceMap).toEqual(assistantSourceMap);
+    });
+
+    it("should preserve message-level metadata through preserve-then-passthrough round-trip", () => {
+      const contentSourceMap = [{ start: 0, end: 5, identifier: "content" }];
+      const originalPromptl = [
+        {
+          role: "user" as const,
+          content: [{ type: "text" as const, text: "Hello", _promptlSourceMap: contentSourceMap }],
+          customField: "message-level-data",
+        },
+      ];
+
+      // Promptl -> VercelAI (preserve)
+      const preserveTranslator = new Translator({ providerMetadata: "preserve" });
+      const vercelAI = preserveTranslator.translate(originalPromptl, {
+        from: Provider.Promptl,
+        to: Provider.VercelAI,
+      });
+
+      // VercelAI -> Promptl (passthrough)
+      const passthroughTranslator = new Translator({ providerMetadata: "passthrough" });
+      const backToPromptl = passthroughTranslator.translate(vercelAI.messages, {
+        from: Provider.VercelAI,
+        to: Provider.Promptl,
+      });
+
+      // Both content-level and message-level metadata should be preserved
+      const finalMessage = backToPromptl.messages[0] as { customField?: string; content: unknown[] };
+      expect(finalMessage.customField).toBe("message-level-data");
+
+      const finalContent = finalMessage.content[0] as { _promptlSourceMap?: unknown };
+      expect(finalContent._promptlSourceMap).toEqual(contentSourceMap);
     });
   });
 });

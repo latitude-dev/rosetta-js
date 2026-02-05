@@ -25,9 +25,23 @@ export const KnownFieldsSchema = z
   .passthrough();
 
 /**
+ * Schema for collapsed part-level metadata (used when target doesn't support structured content).
+ * Has the same structure as part metadata: known fields + extra fields.
+ */
+export const PartsMetadataSchema = z
+  .object({
+    /** Known fields from collapsed parts */
+    _known_fields: KnownFieldsSchema.optional(),
+    /** Also check camelCase version */
+    _knownFields: KnownFieldsSchema.optional(),
+  })
+  .passthrough();
+
+/**
  * Provider metadata schema for preserving provider-specific data.
  * This is a flat structure with:
  * - `_known_fields`: Internal fields used for building correct translations
+ * - `_parts_metadata`: Collapsed part-level metadata (when target uses string content)
  * - All other fields: Extra data from the source provider, passed through
  *
  * The metadata is stored at `_provider_metadata` on GenAI entities.
@@ -40,6 +54,10 @@ export const ProviderMetadataSchema = z
     _known_fields: KnownFieldsSchema.optional(),
     /** Also check camelCase version (from VercelAI/Promptl targets) */
     _knownFields: KnownFieldsSchema.optional(),
+    /** Collapsed part-level metadata (when target uses string content) */
+    _parts_metadata: PartsMetadataSchema.optional(),
+    /** Also check camelCase version (from VercelAI/Promptl targets) */
+    _partsMetadata: PartsMetadataSchema.optional(),
   })
   .passthrough();
 

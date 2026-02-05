@@ -977,7 +977,7 @@ export const OpenAICompletionsSpecification = {
 Use, and add to, shared utilities from `$package/utils`:
 
 ```typescript
-import { extractExtraFields, isUrlString } from "$package/utils";
+import { extractExtraFields, isUrlString, getPartsMetadata } from "$package/utils";
 
 // Extract fields not in known keys (for passthrough preservation)
 const extra = extractExtraFields(obj, ["role", "content"]);
@@ -992,6 +992,13 @@ if (isUrlString(value)) {
 // Read cross-provider data from root-level shared fields
 const toolName = part._provider_metadata?.toolName as string | undefined;
 const isError = part._provider_metadata?.isError as boolean | undefined;
+
+// Extract collapsed part metadata from message metadata (handles both casings)
+const partsMetadata = getPartsMetadata(msgMetadata);
+if (partsMetadata && content.length > 0) {
+  // Apply parts metadata to first content part
+  content[0] = applyMetadataMode(content[0], partsMetadata, mode, true);
+}
 ```
 
 #### Cross-Provider Translation Considerations
@@ -1096,6 +1103,60 @@ if (part.type === "reasoning") {
   return { type: "reasoning", text: part.content };
 }
 ```
+
+**5. Part-Level vs Message-Level Metadata in `fromGenAI`:**
+
+When implementing `fromGenAI`, be careful to preserve **part-level metadata** when the target provider format allows it. A common bug is losing part metadata when collapsing content to a simpler format.
+
+**Problem scenario**: Some providers optimize single-text-part messages to string content (e.g., `{ role: "user", content: "Hello" }` instead of `{ role: "user", content: [{ type: "text", text: "Hello" }] }`). If parts have metadata, this optimization discards it.
+
+**Solution**: Only collapse to string content when mode is `"strip"` OR when parts have no metadata:
+
+```typescript
+// Check if any part has metadata to preserve
+const hasPartMetadata = () =>
+  message.parts.some((p) => {
+    const meta = readMetadata(p as unknown as Record<string, unknown>);
+    return meta && Object.keys(meta).length > 0;
+  });
+
+// Only collapse when safe (strip mode or no metadata)
+const shouldCollapseToString = () => mode === "strip" || !hasPartMetadata();
+
+// Use the check before collapsing
+if (userParts.length === 1 && userParts[0]?.type === "text" && shouldCollapseToString()) {
+  return [applyMode({ role: "user", content: userParts[0].text })];
+}
+// Otherwise keep as array to preserve part metadata
+return [applyMode({ role: "user", content: userParts })];
+```
+
+**For providers that require string content** (like system messages in VercelAI), collect part metadata into `_partsMetadata`:
+
+```typescript
+// Collect part metadata into _partsMetadata (preserves everything including _known_fields)
+let combinedMeta = msgMetadata ? { ...msgMetadata } : undefined;
+let partsMetadata: Record<string, unknown> | undefined;
+for (const part of message.parts.filter((p) => p.type === "text")) {
+  const partMeta = readMetadata(part as unknown as Record<string, unknown>);
+  if (partMeta && Object.keys(partMeta).length > 0) {
+    partsMetadata = { ...partsMetadata, ...partMeta };
+  }
+}
+if (partsMetadata) {
+  combinedMeta = { ...combinedMeta, _partsMetadata: partsMetadata };
+}
+
+// Apply combined metadata to the message
+return [applyMetadataMode({ role: "system", content: textContent }, combinedMeta, mode, true)];
+```
+
+When `applyMetadataMode` is called:
+- In **preserve** mode: `_partsMetadata` stays nested inside `_providerMetadata` (like `_knownFields`)
+- In **passthrough** mode: `_partsMetadata` is stripped (like `_knownFields`), so part metadata is lost for messages that can't have structured content
+- In **strip** mode: All metadata is removed
+
+**Important**: In passthrough mode, if the target provider doesn't support structured content (like VercelAI system messages), part-level metadata stored in `_partsMetadata` will be lost. Use **preserve** mode if you need to retain this metadata through round-trips.
 
 ### Schema Design Principles
 
@@ -1265,11 +1326,20 @@ The `_provider_metadata` object has two parts:
     originalType: "custom_type" // Original type for lossy conversions
   },
 
+  // Parts metadata - collapsed part-level metadata when target doesn't support structured content
+  // Used by providers like VercelAI (system messages only support string content)
+  _partsMetadata: {
+    _promptlSourceMap: [...],   // Part metadata collapsed to message level
+    custom_part_field: "value",
+  },
+
   // Extra fields - provider-specific data for round-trips
   custom_field: "value",
   annotations: [...],
 }
 ```
+
+**Note on `_partsMetadata`**: Some providers require string content for certain message types (e.g., VercelAI system messages). When converting from GenAI to such providers, part-level metadata is collected and stored in `_partsMetadata` at the message level. When converting back to a provider that supports structured content, this metadata is extracted and applied to the first content part. Use `getPartsMetadata()` to read this field (handles both camelCase and snake_case variants).
 
 #### How to Use This
 

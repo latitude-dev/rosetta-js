@@ -1067,6 +1067,551 @@ describe("VercelAISpecification", () => {
         expect(result.messages[2]?.role).toBe("assistant");
       });
     });
+
+    describe("part-level metadata handling", () => {
+      const sourceMap = [{ start: 0, end: 10, identifier: "test" }];
+
+      describe("passthrough mode", () => {
+        it("should preserve part-level metadata on user message text parts", () => {
+          const messages: GenAIMessage[] = [
+            {
+              role: "user",
+              parts: [{ type: "text", content: "Hello", _provider_metadata: { _promptlSourceMap: sourceMap } }],
+            },
+          ];
+
+          const result = VercelAISpecification.fromGenAI({
+            messages,
+            direction: "output",
+            providerMetadata: "passthrough",
+          });
+
+          // Content should be array to preserve part metadata
+          expect(Array.isArray(result.messages[0]?.content)).toBe(true);
+          const content = result.messages[0]?.content as Array<{
+            type: string;
+            text: string;
+            _promptlSourceMap?: unknown;
+          }>;
+          expect(content[0]?.type).toBe("text");
+          expect(content[0]?.text).toBe("Hello");
+          expect(content[0]?._promptlSourceMap).toEqual(sourceMap);
+        });
+
+        it("should preserve part-level metadata on assistant message text parts", () => {
+          const messages: GenAIMessage[] = [
+            {
+              role: "assistant",
+              parts: [{ type: "text", content: "Response", _provider_metadata: { _promptlSourceMap: sourceMap } }],
+            },
+          ];
+
+          const result = VercelAISpecification.fromGenAI({
+            messages,
+            direction: "output",
+            providerMetadata: "passthrough",
+          });
+
+          // Content should be array to preserve part metadata
+          expect(Array.isArray(result.messages[0]?.content)).toBe(true);
+          const content = result.messages[0]?.content as Array<{
+            type: string;
+            text: string;
+            _promptlSourceMap?: unknown;
+          }>;
+          expect(content[0]?.type).toBe("text");
+          expect(content[0]?.text).toBe("Response");
+          expect(content[0]?._promptlSourceMap).toEqual(sourceMap);
+        });
+
+        it("should lose part-level metadata on system message in passthrough mode", () => {
+          const messages: GenAIMessage[] = [
+            {
+              role: "system",
+              parts: [{ type: "text", content: "Be helpful", _provider_metadata: { _promptlSourceMap: sourceMap } }],
+            },
+          ];
+
+          const result = VercelAISpecification.fromGenAI({
+            messages,
+            direction: "output",
+            providerMetadata: "passthrough",
+          });
+
+          // System message uses string content, part metadata is lost in passthrough mode
+          // because _partsMetadata is stripped (not spread) and there's no content part to apply it to
+          expect(result.messages[0]?.content).toBe("Be helpful");
+          expect((result.messages[0] as { _promptlSourceMap?: unknown })._promptlSourceMap).toBeUndefined();
+          expect((result.messages[0] as { _partsMetadata?: unknown })._partsMetadata).toBeUndefined();
+        });
+
+        it("should preserve multiple parts with metadata as array content", () => {
+          const sourceMap2 = [{ start: 11, end: 20, identifier: "test2" }];
+          const messages: GenAIMessage[] = [
+            {
+              role: "user",
+              parts: [
+                { type: "text", content: "Hello", _provider_metadata: { _promptlSourceMap: sourceMap } },
+                { type: "text", content: "World", _provider_metadata: { _promptlSourceMap: sourceMap2 } },
+              ],
+            },
+          ];
+
+          const result = VercelAISpecification.fromGenAI({
+            messages,
+            direction: "output",
+            providerMetadata: "passthrough",
+          });
+
+          expect(Array.isArray(result.messages[0]?.content)).toBe(true);
+          const content = result.messages[0]?.content as Array<{
+            type: string;
+            text: string;
+            _promptlSourceMap?: unknown;
+          }>;
+          expect(content).toHaveLength(2);
+          expect(content[0]?._promptlSourceMap).toEqual(sourceMap);
+          expect(content[1]?._promptlSourceMap).toEqual(sourceMap2);
+        });
+      });
+
+      describe("preserve mode", () => {
+        it("should preserve part-level metadata on user message text parts", () => {
+          const messages: GenAIMessage[] = [
+            {
+              role: "user",
+              parts: [{ type: "text", content: "Hello", _provider_metadata: { _promptlSourceMap: sourceMap } }],
+            },
+          ];
+
+          const result = VercelAISpecification.fromGenAI({
+            messages,
+            direction: "output",
+            providerMetadata: "preserve",
+          });
+
+          // Content should be array to preserve part metadata
+          expect(Array.isArray(result.messages[0]?.content)).toBe(true);
+          const content = result.messages[0]?.content as Array<{
+            type: string;
+            text: string;
+            _providerMetadata?: { _promptlSourceMap?: unknown };
+          }>;
+          expect(content[0]?.type).toBe("text");
+          expect(content[0]?.text).toBe("Hello");
+          expect(content[0]?._providerMetadata?._promptlSourceMap).toEqual(sourceMap);
+        });
+
+        it("should preserve part-level metadata on assistant message text parts", () => {
+          const messages: GenAIMessage[] = [
+            {
+              role: "assistant",
+              parts: [{ type: "text", content: "Response", _provider_metadata: { _promptlSourceMap: sourceMap } }],
+            },
+          ];
+
+          const result = VercelAISpecification.fromGenAI({
+            messages,
+            direction: "output",
+            providerMetadata: "preserve",
+          });
+
+          // Content should be array to preserve part metadata
+          expect(Array.isArray(result.messages[0]?.content)).toBe(true);
+          const content = result.messages[0]?.content as Array<{
+            type: string;
+            text: string;
+            _providerMetadata?: { _promptlSourceMap?: unknown };
+          }>;
+          expect(content[0]?.type).toBe("text");
+          expect(content[0]?.text).toBe("Response");
+          expect(content[0]?._providerMetadata?._promptlSourceMap).toEqual(sourceMap);
+        });
+
+        it("should merge part-level metadata into system message _providerMetadata._partsMetadata", () => {
+          const messages: GenAIMessage[] = [
+            {
+              role: "system",
+              parts: [{ type: "text", content: "Be helpful", _provider_metadata: { _promptlSourceMap: sourceMap } }],
+            },
+          ];
+
+          const result = VercelAISpecification.fromGenAI({
+            messages,
+            direction: "output",
+            providerMetadata: "preserve",
+          });
+
+          // System message uses string content, so part metadata is stored in _partsMetadata
+          expect(result.messages[0]?.content).toBe("Be helpful");
+          expect(
+            (result.messages[0] as { _providerMetadata?: { _partsMetadata?: { _promptlSourceMap?: unknown } } })
+              ._providerMetadata?._partsMetadata?._promptlSourceMap,
+          ).toEqual(sourceMap);
+        });
+
+        it("should preserve multiple parts with metadata as array content", () => {
+          const sourceMap2 = [{ start: 11, end: 20, identifier: "test2" }];
+          const messages: GenAIMessage[] = [
+            {
+              role: "user",
+              parts: [
+                { type: "text", content: "Hello", _provider_metadata: { _promptlSourceMap: sourceMap } },
+                { type: "text", content: "World", _provider_metadata: { _promptlSourceMap: sourceMap2 } },
+              ],
+            },
+          ];
+
+          const result = VercelAISpecification.fromGenAI({
+            messages,
+            direction: "output",
+            providerMetadata: "preserve",
+          });
+
+          expect(Array.isArray(result.messages[0]?.content)).toBe(true);
+          const content = result.messages[0]?.content as Array<{
+            type: string;
+            text: string;
+            _providerMetadata?: { _promptlSourceMap?: unknown };
+          }>;
+          expect(content).toHaveLength(2);
+          expect(content[0]?._providerMetadata?._promptlSourceMap).toEqual(sourceMap);
+          expect(content[1]?._providerMetadata?._promptlSourceMap).toEqual(sourceMap2);
+        });
+      });
+
+      describe("strip mode", () => {
+        it("should collapse single text part to string when no metadata to preserve", () => {
+          const messages: GenAIMessage[] = [
+            {
+              role: "user",
+              parts: [{ type: "text", content: "Hello" }],
+            },
+          ];
+
+          const result = VercelAISpecification.fromGenAI({
+            messages,
+            direction: "output",
+            providerMetadata: "strip",
+          });
+
+          // Should collapse to string for optimization
+          expect(result.messages[0]?.content).toBe("Hello");
+        });
+
+        it("should collapse single text part to string even when part has metadata in strip mode", () => {
+          const messages: GenAIMessage[] = [
+            {
+              role: "user",
+              parts: [{ type: "text", content: "Hello", _provider_metadata: { _promptlSourceMap: sourceMap } }],
+            },
+          ];
+
+          const result = VercelAISpecification.fromGenAI({
+            messages,
+            direction: "output",
+            providerMetadata: "strip",
+          });
+
+          // Strip mode should still collapse to string
+          expect(result.messages[0]?.content).toBe("Hello");
+        });
+      });
+
+      describe("_partsMetadata handling for system messages", () => {
+        it("should lose system part metadata in passthrough mode (no parts to restore to)", () => {
+          const messages: GenAIMessage[] = [
+            {
+              role: "system",
+              parts: [{ type: "text", content: "Be helpful", _provider_metadata: { _promptlSourceMap: sourceMap } }],
+            },
+          ];
+
+          const result = VercelAISpecification.fromGenAI({
+            messages,
+            direction: "output",
+            providerMetadata: "passthrough",
+          });
+
+          // In passthrough mode, _partsMetadata is stripped (like _known_fields)
+          // Since system messages use string content, there's no content part to restore metadata to
+          expect(result.messages[0]?.content).toBe("Be helpful");
+          expect((result.messages[0] as { _promptlSourceMap?: unknown })._promptlSourceMap).toBeUndefined();
+          expect((result.messages[0] as { _partsMetadata?: unknown })._partsMetadata).toBeUndefined();
+        });
+
+        it("should store system part metadata in _partsMetadata inside _providerMetadata when mode is preserve", () => {
+          const messages: GenAIMessage[] = [
+            {
+              role: "system",
+              parts: [{ type: "text", content: "Be helpful", _provider_metadata: { _promptlSourceMap: sourceMap } }],
+            },
+          ];
+
+          const result = VercelAISpecification.fromGenAI({
+            messages,
+            direction: "output",
+            providerMetadata: "preserve",
+          });
+
+          // In preserve mode, _partsMetadata is stored inside _providerMetadata
+          expect(result.messages[0]?.content).toBe("Be helpful");
+          const msg = result.messages[0] as {
+            _providerMetadata?: {
+              _partsMetadata?: { _promptlSourceMap?: unknown };
+            };
+          };
+          expect(msg._providerMetadata?._partsMetadata?._promptlSourceMap).toEqual(sourceMap);
+        });
+
+        it("should not include _partsMetadata when system message has no part metadata in passthrough mode", () => {
+          const messages: GenAIMessage[] = [
+            {
+              role: "system",
+              parts: [{ type: "text", content: "Be helpful" }],
+            },
+          ];
+
+          const result = VercelAISpecification.fromGenAI({
+            messages,
+            direction: "output",
+            providerMetadata: "passthrough",
+          });
+
+          expect(result.messages[0]?.content).toBe("Be helpful");
+          expect((result.messages[0] as { _partsMetadata?: unknown })._partsMetadata).toBeUndefined();
+        });
+
+        it("should strip _partsMetadata in strip mode", () => {
+          const messages: GenAIMessage[] = [
+            {
+              role: "system",
+              parts: [{ type: "text", content: "Be helpful", _provider_metadata: { _promptlSourceMap: sourceMap } }],
+            },
+          ];
+
+          const result = VercelAISpecification.fromGenAI({
+            messages,
+            direction: "output",
+            providerMetadata: "strip",
+          });
+
+          expect(result.messages[0]?.content).toBe("Be helpful");
+          expect((result.messages[0] as { _partsMetadata?: unknown })._partsMetadata).toBeUndefined();
+          expect((result.messages[0] as { _providerMetadata?: unknown })._providerMetadata).toBeUndefined();
+        });
+      });
+
+      describe("_partsMetadata restoration for user messages", () => {
+        it("should apply _partsMetadata to the first user content part in passthrough mode", () => {
+          const sourceMap = [{ start: 0, end: 10, identifier: "test" }];
+          const messages: GenAIMessage[] = [
+            {
+              role: "user",
+              parts: [{ type: "text", content: "Hello" }],
+              _provider_metadata: { _parts_metadata: { _promptlSourceMap: sourceMap } },
+            },
+          ];
+
+          const result = VercelAISpecification.fromGenAI({
+            messages,
+            direction: "input",
+            providerMetadata: "passthrough",
+          });
+
+          // User message should have array content with metadata on the first part
+          expect(Array.isArray(result.messages[0]?.content)).toBe(true);
+          const content = result.messages[0]?.content as Array<{ type: string; _promptlSourceMap?: unknown }>;
+          expect(content[0]?._promptlSourceMap).toEqual(sourceMap);
+        });
+
+        it("should apply _partsMetadata to the first user content part in preserve mode", () => {
+          const sourceMap = [{ start: 0, end: 10, identifier: "test" }];
+          const messages: GenAIMessage[] = [
+            {
+              role: "user",
+              parts: [{ type: "text", content: "Hello" }],
+              _provider_metadata: { _partsMetadata: { _promptlSourceMap: sourceMap } },
+            },
+          ];
+
+          const result = VercelAISpecification.fromGenAI({
+            messages,
+            direction: "input",
+            providerMetadata: "preserve",
+          });
+
+          // User message should have array content with metadata nested in _providerMetadata
+          expect(Array.isArray(result.messages[0]?.content)).toBe(true);
+          const content = result.messages[0]?.content as Array<{
+            type: string;
+            _providerMetadata?: { _promptlSourceMap?: unknown };
+          }>;
+          expect(content[0]?._providerMetadata?._promptlSourceMap).toEqual(sourceMap);
+        });
+
+        it("should not collapse to string when _partsMetadata exists", () => {
+          const sourceMap = [{ start: 0, end: 10, identifier: "test" }];
+          const messages: GenAIMessage[] = [
+            {
+              role: "user",
+              parts: [{ type: "text", content: "Hello" }],
+              _provider_metadata: { _partsMetadata: { _promptlSourceMap: sourceMap } },
+            },
+          ];
+
+          const result = VercelAISpecification.fromGenAI({
+            messages,
+            direction: "input",
+            providerMetadata: "passthrough",
+          });
+
+          // Should use array content, not string, to preserve metadata
+          expect(Array.isArray(result.messages[0]?.content)).toBe(true);
+        });
+      });
+
+      describe("_partsMetadata restoration for assistant messages", () => {
+        it("should apply _partsMetadata to the first assistant content part in passthrough mode", () => {
+          const sourceMap = [{ start: 0, end: 10, identifier: "test" }];
+          const messages: GenAIMessage[] = [
+            {
+              role: "assistant",
+              parts: [{ type: "text", content: "Hello" }],
+              _provider_metadata: { _parts_metadata: { _promptlSourceMap: sourceMap } },
+            },
+          ];
+
+          const result = VercelAISpecification.fromGenAI({
+            messages,
+            direction: "output",
+            providerMetadata: "passthrough",
+          });
+
+          // Assistant message should have array content with metadata on the first part
+          expect(Array.isArray(result.messages[0]?.content)).toBe(true);
+          const content = result.messages[0]?.content as Array<{ type: string; _promptlSourceMap?: unknown }>;
+          expect(content[0]?._promptlSourceMap).toEqual(sourceMap);
+        });
+
+        it("should apply _partsMetadata to the first assistant content part in preserve mode", () => {
+          const sourceMap = [{ start: 0, end: 10, identifier: "test" }];
+          const messages: GenAIMessage[] = [
+            {
+              role: "assistant",
+              parts: [{ type: "text", content: "Hello" }],
+              _provider_metadata: { _partsMetadata: { _promptlSourceMap: sourceMap } },
+            },
+          ];
+
+          const result = VercelAISpecification.fromGenAI({
+            messages,
+            direction: "output",
+            providerMetadata: "preserve",
+          });
+
+          // Assistant message should have array content with metadata nested in _providerMetadata
+          expect(Array.isArray(result.messages[0]?.content)).toBe(true);
+          const content = result.messages[0]?.content as Array<{
+            type: string;
+            _providerMetadata?: { _promptlSourceMap?: unknown };
+          }>;
+          expect(content[0]?._providerMetadata?._promptlSourceMap).toEqual(sourceMap);
+        });
+
+        it("should not collapse to string when _partsMetadata exists", () => {
+          const sourceMap = [{ start: 0, end: 10, identifier: "test" }];
+          const messages: GenAIMessage[] = [
+            {
+              role: "assistant",
+              parts: [{ type: "text", content: "Hello" }],
+              _provider_metadata: { _partsMetadata: { _promptlSourceMap: sourceMap } },
+            },
+          ];
+
+          const result = VercelAISpecification.fromGenAI({
+            messages,
+            direction: "output",
+            providerMetadata: "passthrough",
+          });
+
+          // Should use array content, not string, to preserve metadata
+          expect(Array.isArray(result.messages[0]?.content)).toBe(true);
+        });
+      });
+
+      describe("_partsMetadata restoration for tool messages", () => {
+        it("should apply _partsMetadata to the first tool content part in passthrough mode", () => {
+          const sourceMap = [{ start: 0, end: 10, identifier: "test" }];
+          const messages: GenAIMessage[] = [
+            {
+              role: "tool",
+              parts: [{ type: "tool_call_response", id: "call_1", response: "Result" }],
+              _provider_metadata: { _parts_metadata: { _promptlSourceMap: sourceMap } },
+            },
+          ];
+
+          const result = VercelAISpecification.fromGenAI({
+            messages,
+            direction: "output",
+            providerMetadata: "passthrough",
+          });
+
+          // Tool message should have array content with metadata on the first part
+          const content = result.messages[0]?.content as Array<{ type: string; _promptlSourceMap?: unknown }>;
+          expect(content[0]?._promptlSourceMap).toEqual(sourceMap);
+        });
+
+        it("should apply _partsMetadata to the first tool content part in preserve mode", () => {
+          const sourceMap = [{ start: 0, end: 10, identifier: "test" }];
+          const messages: GenAIMessage[] = [
+            {
+              role: "tool",
+              parts: [{ type: "tool_call_response", id: "call_1", response: "Result" }],
+              _provider_metadata: { _partsMetadata: { _promptlSourceMap: sourceMap } },
+            },
+          ];
+
+          const result = VercelAISpecification.fromGenAI({
+            messages,
+            direction: "output",
+            providerMetadata: "preserve",
+          });
+
+          // Tool message should have array content with metadata nested in _providerMetadata
+          const content = result.messages[0]?.content as Array<{
+            type: string;
+            _providerMetadata?: { _promptlSourceMap?: unknown };
+          }>;
+          expect(content[0]?._providerMetadata?._promptlSourceMap).toEqual(sourceMap);
+        });
+
+        it("should not include _partsMetadata when mode is strip", () => {
+          const sourceMap = [{ start: 0, end: 10, identifier: "test" }];
+          const messages: GenAIMessage[] = [
+            {
+              role: "tool",
+              parts: [{ type: "tool_call_response", id: "call_1", response: "Result" }],
+              _provider_metadata: { _partsMetadata: { _promptlSourceMap: sourceMap } },
+            },
+          ];
+
+          const result = VercelAISpecification.fromGenAI({
+            messages,
+            direction: "output",
+            providerMetadata: "strip",
+          });
+
+          const content = result.messages[0]?.content as Array<{
+            type: string;
+            _promptlSourceMap?: unknown;
+            _providerMetadata?: unknown;
+          }>;
+          expect(content[0]?._promptlSourceMap).toBeUndefined();
+          expect(content[0]?._providerMetadata).toBeUndefined();
+        });
+      });
+    });
   });
 
   describe("round-trip conversion", () => {
