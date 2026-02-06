@@ -865,6 +865,158 @@ You are a {{ role }} assistant specializing in {{ domain }}.
     });
   });
 
+  describe("tool_call with string arguments (cross-provider: VercelAI → GenAI → Promptl)", () => {
+    it("should coerce string arguments to object when translating VercelAI tool call through GenAI to Promptl", () => {
+      // This is the exact scenario from VercelAI where tool call arguments arrive as a JSON string.
+      // VercelAI messages must be wrapped in { role: "assistant", content: [...] }
+      const vercelAIMessages = [
+        {
+          role: "assistant" as const,
+          content: [
+            {
+              type: "reasoning" as const,
+              text: "**Executing division sequence**\n\nI need to use the code tool before answering.",
+            },
+            {
+              type: "tool-call" as const,
+              toolCallId: "toolCallId",
+              toolName: "lat_tool_run_code",
+              input:
+                '{"language":"python","code":"a = 2 + 2\\nb = a - 2\\nc = b - 2\\ntry:\\n    d = 1 / c\\nexcept Exception as e:\\n    d = str(e)\\nprint(a)\\nprint(b)\\nprint(c)\\nprint(d)"}',
+              providerMetadata: {
+                openai: {
+                  itemId: "itemId",
+                },
+              },
+            },
+          ],
+        },
+      ];
+
+      // Step 1: VercelAI → GenAI
+      const toGenAI = translate(vercelAIMessages, {
+        from: Provider.VercelAI,
+        to: Provider.GenAI,
+      });
+
+      expect(toGenAI.messages).toHaveLength(1);
+      expect(toGenAI.messages[0]?.parts[1]?.type).toBe("tool_call");
+
+      // Step 2: GenAI → Promptl (this used to crash because string arguments were passed through)
+      const toPromptl = translate(toGenAI.messages, {
+        from: Provider.GenAI,
+        to: Provider.Promptl,
+      });
+
+      expect(toPromptl.messages).toHaveLength(1);
+      expect(toPromptl.messages[0]?.role).toBe("assistant");
+
+      const toolCallContent = toPromptl.messages[0]?.content[1] as {
+        type: string;
+        args: Record<string, unknown>;
+        toolArguments: Record<string, unknown>;
+      };
+      expect(toolCallContent.type).toBe("tool-call");
+      // Arguments should be parsed from JSON string to object
+      expect(typeof toolCallContent.args).toBe("object");
+      expect(toolCallContent.args).not.toBeNull();
+      expect(toolCallContent.args.language).toBe("python");
+      expect(typeof toolCallContent.args.code).toBe("string");
+
+      // Step 3: Promptl → GenAI (this used to crash with Zod validation error)
+      const backToGenAI = translate(toPromptl.messages, {
+        from: Provider.Promptl,
+        to: Provider.GenAI,
+      });
+
+      expect(backToGenAI.messages).toHaveLength(1);
+      expect(backToGenAI.messages[0]?.parts[1]?.type).toBe("tool_call");
+      const args = (backToGenAI.messages[0]?.parts[1] as { arguments: unknown }).arguments as Record<string, unknown>;
+      expect(args.language).toBe("python");
+    });
+
+    it("should handle full VercelAI → Promptl → GenAI round-trip with the exact captured output", () => {
+      // Hardcoded messages matching the exact captured VercelAI output,
+      // wrapped in proper VercelAI message format
+      const vercelAIMessages = [
+        {
+          role: "assistant" as const,
+          content: [
+            {
+              type: "reasoning" as const,
+              text: "**Executing division sequence**\n\nI need to use the code tool before answering. I'll run a Python sequence to compute the steps.",
+            },
+            {
+              type: "tool-call" as const,
+              toolCallId: "toolCallId",
+              toolName: "lat_tool_run_code",
+              input:
+                '{"language":"python","code":"a = 2 + 2\\nb = a - 2\\nc = b - 2\\ntry:\\n    d = 1 / c\\nexcept Exception as e:\\n    d = str(e)\\nprint(a)\\nprint(b)\\nprint(c)\\nprint(d)"}',
+              providerMetadata: {
+                openai: {
+                  itemId: "itemId",
+                },
+              },
+            },
+          ],
+        },
+      ];
+
+      // Full translation chain: VercelAI → GenAI → Promptl → GenAI
+      // This should NOT throw
+      const genAI1 = translate(vercelAIMessages, { from: Provider.VercelAI, to: Provider.GenAI });
+      const promptl = translate(genAI1.messages, { from: Provider.GenAI, to: Provider.Promptl });
+      const genAI2 = translate(promptl.messages, { from: Provider.Promptl, to: Provider.GenAI });
+
+      // Verify the final GenAI output is valid
+      expect(genAI2.messages).toHaveLength(1);
+      expect(genAI2.messages[0]?.parts).toHaveLength(2);
+      expect(genAI2.messages[0]?.parts[0]?.type).toBe("reasoning");
+      expect(genAI2.messages[0]?.parts[1]?.type).toBe("tool_call");
+
+      // Arguments should be an object, not a string
+      const finalArgs = (genAI2.messages[0]?.parts[1] as { arguments: unknown }).arguments;
+      expect(typeof finalArgs).toBe("object");
+      expect(finalArgs).not.toBeNull();
+    });
+
+    it("should coerce non-parseable string arguments to { value: string }", () => {
+      const genAIMessages = [
+        {
+          role: "assistant" as const,
+          parts: [
+            {
+              type: "tool_call" as const,
+              id: "call-1",
+              name: "test_tool",
+              arguments: "not valid json at all",
+            },
+          ],
+        },
+      ];
+
+      // GenAI → Promptl (should not crash)
+      const toPromptl = translate(genAIMessages, {
+        from: Provider.GenAI,
+        to: Provider.Promptl,
+      });
+
+      const toolCallContent = toPromptl.messages[0]?.content[0] as {
+        args: Record<string, unknown>;
+      };
+      expect(toolCallContent.args).toEqual({ value: "not valid json at all" });
+
+      // Promptl → GenAI (should not crash)
+      const backToGenAI = translate(toPromptl.messages, {
+        from: Provider.Promptl,
+        to: Provider.GenAI,
+      });
+
+      expect(backToGenAI.messages).toHaveLength(1);
+      expect(backToGenAI.messages[0]?.parts[0]?.type).toBe("tool_call");
+    });
+  });
+
   describe("system message order preservation", () => {
     it("should preserve system message positions and content metadata through Promptl → GenAI (preserve) → Promptl (passthrough)", () => {
       const sourceMap = [{ start: 0, end: 10, identifier: "role" }];

@@ -21,6 +21,7 @@ import {
 } from "$package/providers/provider";
 import {
   applyMetadataMode,
+  coerceToRecord,
   extractExtraFields,
   getKnownFields,
   getPartsMetadata,
@@ -504,7 +505,9 @@ function genAIPartToPromptl(
 
     case "tool_call": {
       // Include both `args` and `toolArguments` for backwards compatibility
-      const args = (part.arguments as Record<string, unknown>) ?? {};
+      // Coerce arguments to Record<string, unknown> since Promptl requires an object,
+      // but GenAI allows z.unknown() (e.g., VercelAI passes JSON strings)
+      const args = coerceToRecord(part.arguments);
       return applyMode({
         type: "tool-call",
         toolCallId: part.id ?? "",

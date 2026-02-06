@@ -359,3 +359,29 @@ export function withMetadata<T extends { type: string; _provider_metadata?: Reco
   if (!metadata) return part;
   return { ...part, _provider_metadata: metadata };
 }
+
+/**
+ * Coerces an unknown value to `Record<string, unknown>`.
+ * Useful when a provider schema requires an object (e.g., tool call arguments)
+ * but GenAI's `z.unknown()` may carry a string, number, array, etc.
+ *
+ * - If already a non-null, non-array object: return as-is
+ * - If a JSON string that parses to an object: return the parsed object
+ * - If undefined/null: return empty object
+ * - Otherwise (unparseable string, number, array, etc.): wrap as `{ value: <original> }`
+ */
+export function coerceToRecord(value: unknown): Record<string, unknown> {
+  if (value === undefined || value === null) return {};
+  if (typeof value === "object" && !Array.isArray(value)) return value as Record<string, unknown>;
+  if (typeof value === "string") {
+    try {
+      const parsed = JSON.parse(value);
+      if (typeof parsed === "object" && parsed !== null && !Array.isArray(parsed)) {
+        return parsed as Record<string, unknown>;
+      }
+    } catch {
+      // Not valid JSON, fall through to wrapping
+    }
+  }
+  return { value };
+}

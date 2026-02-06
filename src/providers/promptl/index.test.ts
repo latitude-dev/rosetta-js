@@ -913,6 +913,138 @@ describe("PromptlSpecification", () => {
         expect((result.messages[0]?.content[0] as { args: unknown }).args).toEqual({});
         expect((result.messages[0]?.content[0] as { toolArguments: unknown }).toolArguments).toEqual({});
       });
+
+      it("should coerce string arguments (JSON) to object", () => {
+        const messages: GenAIMessage[] = [
+          {
+            role: "assistant",
+            parts: [
+              {
+                type: "tool_call",
+                id: "call_ZArzTkv4HCDAjMCaFJBfZAL8",
+                name: "lat_tool_run_code",
+                arguments: '{"language":"python","code":"a = 2 + 2\\nb = a - 2"}',
+              },
+            ],
+          },
+        ];
+
+        const result = PromptlSpecification.fromGenAI({ messages, direction: "output", providerMetadata: "strip" });
+
+        const content = result.messages[0]?.content[0] as { args: unknown; toolArguments: unknown };
+        expect(content.args).toEqual({ language: "python", code: "a = 2 + 2\nb = a - 2" });
+        expect(content.toolArguments).toEqual({ language: "python", code: "a = 2 + 2\nb = a - 2" });
+      });
+
+      it("should wrap non-parseable string arguments as { value: string }", () => {
+        const messages: GenAIMessage[] = [
+          {
+            role: "assistant",
+            parts: [
+              {
+                type: "tool_call",
+                id: "call-str",
+                name: "some_tool",
+                arguments: "not valid json",
+              },
+            ],
+          },
+        ];
+
+        const result = PromptlSpecification.fromGenAI({ messages, direction: "output", providerMetadata: "strip" });
+
+        const content = result.messages[0]?.content[0] as { args: unknown; toolArguments: unknown };
+        expect(content.args).toEqual({ value: "not valid json" });
+        expect(content.toolArguments).toEqual({ value: "not valid json" });
+      });
+
+      it("should wrap array arguments as { value: array }", () => {
+        const messages: GenAIMessage[] = [
+          {
+            role: "assistant",
+            parts: [
+              {
+                type: "tool_call",
+                id: "call-arr",
+                name: "some_tool",
+                arguments: [1, 2, 3],
+              },
+            ],
+          },
+        ];
+
+        const result = PromptlSpecification.fromGenAI({ messages, direction: "output", providerMetadata: "strip" });
+
+        const content = result.messages[0]?.content[0] as { args: unknown; toolArguments: unknown };
+        expect(content.args).toEqual({ value: [1, 2, 3] });
+        expect(content.toolArguments).toEqual({ value: [1, 2, 3] });
+      });
+
+      it("should wrap numeric arguments as { value: number }", () => {
+        const messages: GenAIMessage[] = [
+          {
+            role: "assistant",
+            parts: [
+              {
+                type: "tool_call",
+                id: "call-num",
+                name: "some_tool",
+                arguments: 42,
+              },
+            ],
+          },
+        ];
+
+        const result = PromptlSpecification.fromGenAI({ messages, direction: "output", providerMetadata: "strip" });
+
+        const content = result.messages[0]?.content[0] as { args: unknown; toolArguments: unknown };
+        expect(content.args).toEqual({ value: 42 });
+        expect(content.toolArguments).toEqual({ value: 42 });
+      });
+
+      it("should wrap JSON string that parses to array as { value: array }", () => {
+        const messages: GenAIMessage[] = [
+          {
+            role: "assistant",
+            parts: [
+              {
+                type: "tool_call",
+                id: "call-json-arr",
+                name: "some_tool",
+                arguments: "[1, 2, 3]",
+              },
+            ],
+          },
+        ];
+
+        const result = PromptlSpecification.fromGenAI({ messages, direction: "output", providerMetadata: "strip" });
+
+        const content = result.messages[0]?.content[0] as { args: unknown; toolArguments: unknown };
+        expect(content.args).toEqual({ value: "[1, 2, 3]" });
+        expect(content.toolArguments).toEqual({ value: "[1, 2, 3]" });
+      });
+
+      it("should handle null arguments as empty object", () => {
+        const messages: GenAIMessage[] = [
+          {
+            role: "assistant",
+            parts: [
+              {
+                type: "tool_call",
+                id: "call-null",
+                name: "some_tool",
+                arguments: null,
+              },
+            ],
+          },
+        ];
+
+        const result = PromptlSpecification.fromGenAI({ messages, direction: "output", providerMetadata: "strip" });
+
+        const content = result.messages[0]?.content[0] as { args: unknown; toolArguments: unknown };
+        expect(content.args).toEqual({});
+        expect(content.toolArguments).toEqual({});
+      });
     });
 
     describe("reasoning content", () => {
@@ -2099,6 +2231,59 @@ describe("PromptlSpecification", () => {
       });
 
       expect(restored.messages).toEqual(original);
+    });
+
+    it("should handle GenAI tool_call with string arguments through round-trip (VercelAI scenario)", () => {
+      // Simulates VercelAI sending tool call arguments as a JSON string through GenAI
+      const genAIMessages: GenAIMessage[] = [
+        {
+          role: "assistant",
+          parts: [
+            {
+              type: "reasoning",
+              content: "I need to run some code.",
+            },
+            {
+              type: "tool_call",
+              id: "call_ZArzTkv4HCDAjMCaFJBfZAL8",
+              name: "lat_tool_run_code",
+              arguments: '{"language":"python","code":"a = 2 + 2\\nb = a - 2"}',
+            },
+          ],
+        },
+      ];
+
+      // GenAI → Promptl (fromGenAI should coerce string args to object)
+      const toPromptl = PromptlSpecification.fromGenAI({
+        messages: genAIMessages,
+        direction: "output",
+        providerMetadata: "strip",
+      });
+
+      expect(toPromptl.messages).toHaveLength(1);
+      expect(toPromptl.messages[0]?.role).toBe("assistant");
+
+      const toolCallContent = toPromptl.messages[0]?.content[1] as {
+        type: string;
+        args: Record<string, unknown>;
+        toolArguments: Record<string, unknown>;
+      };
+      expect(toolCallContent.type).toBe("tool-call");
+      expect(toolCallContent.args).toEqual({ language: "python", code: "a = 2 + 2\nb = a - 2" });
+      expect(toolCallContent.toolArguments).toEqual({ language: "python", code: "a = 2 + 2\nb = a - 2" });
+
+      // Promptl → GenAI (toGenAI should NOT crash with schema validation)
+      const backToGenAI = PromptlSpecification.toGenAI({
+        messages: toPromptl.messages,
+        direction: "output",
+      });
+
+      expect(backToGenAI.messages).toHaveLength(1);
+      expect(backToGenAI.messages[0]?.parts[1]?.type).toBe("tool_call");
+      expect((backToGenAI.messages[0]?.parts[1] as { arguments: unknown }).arguments).toEqual({
+        language: "python",
+        code: "a = 2 + 2\nb = a - 2",
+      });
     });
 
     it("should preserve extra message fields through round-trip", () => {
