@@ -864,4 +864,119 @@ You are a {{ role }} assistant specializing in {{ domain }}.
       expect(result.messages[1]?.role).toBe("tool");
     });
   });
+
+  describe("system message order preservation", () => {
+    it("should preserve system message positions and content metadata through Promptl → GenAI (preserve) → Promptl (passthrough)", () => {
+      const sourceMap = [{ start: 0, end: 10, identifier: "role" }];
+
+      const originalMessages = [
+        {
+          role: "system" as const,
+          content: [{ type: "text" as const, text: "You are helpful.", _promptlSourceMap: sourceMap }],
+        },
+        { role: "user" as const, content: [{ type: "text" as const, text: "Hello!" }] },
+        {
+          role: "system" as const,
+          content: [{ type: "text" as const, text: "Be concise." }],
+        },
+        { role: "assistant" as const, content: [{ type: "text" as const, text: "Hi there!" }] },
+        {
+          role: "system" as const,
+          content: [{ type: "text" as const, text: "Use formal language." }],
+        },
+        { role: "user" as const, content: [{ type: "text" as const, text: "Tell me about AI." }] },
+      ];
+
+      // Step 1: Promptl → GenAI (preserve mode - the default)
+      const toGenAI = translate(originalMessages, {
+        from: Provider.Promptl,
+        to: Provider.GenAI,
+      });
+
+      // System messages should be extracted
+      expect(toGenAI.system).toBeDefined();
+      expect(toGenAI.system).toHaveLength(3);
+      expect(toGenAI.messages).toHaveLength(3);
+
+      // Step 2: GenAI → Promptl (passthrough mode)
+      const passthroughTranslator = new Translator({ providerMetadata: "passthrough" });
+      const backToPromptl = passthroughTranslator.translate(toGenAI.messages, {
+        from: Provider.GenAI,
+        to: Provider.Promptl,
+        system: toGenAI.system,
+      });
+
+      // Should have same number of messages with same roles in same order
+      expect(backToPromptl.messages).toHaveLength(originalMessages.length);
+      expect(backToPromptl.messages.map((m) => m.role)).toEqual(originalMessages.map((m) => m.role));
+
+      // Each message should be exactly equal to the original
+      for (let i = 0; i < originalMessages.length; i++) {
+        // biome-ignore lint/style/noNonNullAssertion: index is within bounds
+        expect(backToPromptl.messages[i]!).toEqual(originalMessages[i]!);
+      }
+    });
+
+    it("should preserve system order with tool calls interspersed", () => {
+      const originalMessages = [
+        { role: "system" as const, content: [{ type: "text" as const, text: "You are a coding assistant." }] },
+        { role: "user" as const, content: [{ type: "text" as const, text: "Run my tests" }] },
+        {
+          role: "assistant" as const,
+          content: [
+            {
+              type: "tool-call" as const,
+              toolCallId: "call-1",
+              toolName: "run_tests",
+              args: { suite: "unit" },
+              toolArguments: { suite: "unit" },
+            },
+          ],
+        },
+        {
+          role: "tool" as const,
+          toolName: "run_tests",
+          toolId: "call-1",
+          content: [
+            {
+              type: "tool-result" as const,
+              toolCallId: "call-1",
+              toolName: "run_tests",
+              result: "3 tests passed",
+              isError: false,
+            },
+          ],
+        },
+        { role: "system" as const, content: [{ type: "text" as const, text: "Now respond briefly." }] },
+        { role: "assistant" as const, content: [{ type: "text" as const, text: "All 3 tests passed." }] },
+      ];
+
+      // Step 1: Promptl → GenAI (preserve)
+      const toGenAI = translate(originalMessages, {
+        from: Provider.Promptl,
+        to: Provider.GenAI,
+      });
+
+      expect(toGenAI.system).toHaveLength(2);
+      expect(toGenAI.messages).toHaveLength(4);
+
+      // Step 2: GenAI → Promptl (passthrough)
+      const passthroughTranslator = new Translator({ providerMetadata: "passthrough" });
+      const backToPromptl = passthroughTranslator.translate(toGenAI.messages, {
+        from: Provider.GenAI,
+        to: Provider.Promptl,
+        system: toGenAI.system,
+      });
+
+      // Roles should match original order
+      expect(backToPromptl.messages).toHaveLength(originalMessages.length);
+      expect(backToPromptl.messages.map((m) => m.role)).toEqual(originalMessages.map((m) => m.role));
+
+      // Each message should be exactly equal to the original
+      for (let i = 0; i < originalMessages.length; i++) {
+        // biome-ignore lint/style/noNonNullAssertion: index is within bounds
+        expect(backToPromptl.messages[i]!).toEqual(originalMessages[i]!);
+      }
+    });
+  });
 });

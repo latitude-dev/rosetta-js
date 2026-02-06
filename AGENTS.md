@@ -569,7 +569,7 @@ GenAI allows passthrough for roles, has a generic part type, and supports `_prov
 **6.1. The Metadata Structure:**
 
 The `_provider_metadata` field has two parts:
-- **`_known_fields`**: Cross-provider semantic data (`toolName`, `isError`, `isRefusal`, `originalType`)
+- **`_known_fields`**: Cross-provider semantic data (`toolName`, `isError`, `isRefusal`, `originalType`, `messageIndex`)
 - **Extra fields**: Provider-specific data at the root level
 
 Use the utility functions from `$package/utils`:
@@ -689,6 +689,12 @@ fromGenAI({ messages }) {
   return { messages: filtered, system: system.length > 0 ? system : undefined };
 }
 ```
+
+**System message order preservation:**
+
+When the GenAI provider's `fromGenAI` extracts system messages, it stores the original message index on each system part via `_known_fields.messageIndex`. When `toGenAI` receives system parts with `messageIndex`, it reconstructs the original positions by inserting system messages at their stored indices (clamped to valid range). If no parts have `messageIndex`, it falls back to prepending all system parts as a single message at position 0.
+
+This allows round-tripping through providers that separate system from messages (like GenAI) without losing the original conversation order.
 
 #### Step 8: Add to Inference Priority (Optional)
 
@@ -1284,7 +1290,7 @@ export type ProviderMessage<P extends Provider> =
    **Remember:**
    - `knownKeys` = fields you explicitly handle in your conversion code
    - `extraFields` = provider-specific data for same-provider round-trips
-   - `_known_fields` (via `storeMetadata`) = semantic data for cross-provider translation (`toolName`, `isError`, `isRefusal`, `originalType`)
+   - `_known_fields` (via `storeMetadata`) = semantic data for cross-provider translation (`toolName`, `isError`, `isRefusal`, `originalType`, `messageIndex`)
 
 ### Key Design Decisions
 
@@ -1323,7 +1329,8 @@ The `_provider_metadata` object has two parts:
     toolName: "get_weather",    // Tool name for tool_call_response parts
     isError: true,              // Error indicator
     isRefusal: false,           // Refusal indicator
-    originalType: "custom_type" // Original type for lossy conversions
+    originalType: "custom_type", // Original type for lossy conversions
+    messageIndex: 2,            // Original position of system message in conversation
   },
 
   // Parts metadata - collapsed part-level metadata when target doesn't support structured content

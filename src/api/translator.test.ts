@@ -157,7 +157,7 @@ describe("Translator", () => {
         expect(result.messages).toHaveLength(1);
         expect(result.messages[0]?.role).toBe("user");
         expect(result.system).toHaveLength(1);
-        expect(result.system?.[0]).toEqual({
+        expect(result.system?.[0]).toMatchObject({
           type: "text",
           content: "You are a helpful assistant.",
         });
@@ -179,7 +179,8 @@ describe("Translator", () => {
         expect(result.messages).toHaveLength(1);
         expect(result.messages[0]?.role).toBe("user");
         expect(result.system).toHaveLength(2);
-        expect(result.system).toEqual(system);
+        expect(result.system?.[0]).toMatchObject({ type: "text", content: "Be helpful" });
+        expect(result.system?.[1]).toMatchObject({ type: "text", content: "Be concise" });
       });
 
       it("should extract system from GenAI when converting to GenAI", () => {
@@ -196,7 +197,7 @@ describe("Translator", () => {
         expect(result.messages).toHaveLength(1);
         expect(result.messages[0]?.role).toBe("user");
         expect(result.system).toHaveLength(1);
-        expect(result.system?.[0]).toEqual({ type: "text", content: "Be helpful" });
+        expect(result.system?.[0]).toMatchObject({ type: "text", content: "Be helpful" });
       });
     });
 

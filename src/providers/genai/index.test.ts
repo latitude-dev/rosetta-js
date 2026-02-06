@@ -219,7 +219,7 @@ describe("GenAISpecification", () => {
       expect(result?.messages).toHaveLength(1);
       expect(result?.messages[0]?.role).toBe("user");
       expect(result?.system).toHaveLength(1);
-      expect(result?.system?.[0]).toEqual({ type: "text", content: "Be helpful" });
+      expect(result?.system?.[0]).toMatchObject({ type: "text", content: "Be helpful" });
     });
 
     it("should merge multiple system messages into system array", () => {
@@ -246,8 +246,8 @@ describe("GenAISpecification", () => {
 
       expect(result?.messages).toHaveLength(1);
       expect(result?.system).toHaveLength(2);
-      expect(result?.system?.[0]).toEqual({ type: "text", content: "Be helpful" });
-      expect(result?.system?.[1]).toEqual({ type: "text", content: "Be concise" });
+      expect(result?.system?.[0]).toMatchObject({ type: "text", content: "Be helpful" });
+      expect(result?.system?.[1]).toMatchObject({ type: "text", content: "Be concise" });
     });
 
     it("should return undefined system when no system messages exist", () => {
@@ -295,10 +295,8 @@ describe("GenAISpecification", () => {
 
       expect(result?.messages).toHaveLength(1);
       expect(result?.system).toHaveLength(2);
-      expect(result?.system).toEqual([
-        { type: "text", content: "Be helpful" },
-        { type: "text", content: "Be concise" },
-      ]);
+      expect(result?.system?.[0]).toMatchObject({ type: "text", content: "Be helpful" });
+      expect(result?.system?.[1]).toMatchObject({ type: "text", content: "Be concise" });
     });
   });
 
@@ -323,7 +321,9 @@ describe("GenAISpecification", () => {
       });
 
       expect(fromResult?.messages).toEqual(originalMessages);
-      expect(fromResult?.system).toEqual(originalSystem);
+      // System parts now include messageIndex metadata for order preservation
+      expect(fromResult?.system).toHaveLength(1);
+      expect(fromResult?.system?.[0]).toMatchObject({ type: "text", content: "Be helpful" });
     });
   });
 
@@ -750,6 +750,222 @@ describe("GenAISpecification", () => {
 
       expect(fromResult?.messages[0]).toHaveProperty("custom_message_field", "message_value");
       expect(fromResult?.messages[0]?.parts[0]).toHaveProperty("custom_part_field", "part_value");
+    });
+  });
+
+  describe("system message order preservation", () => {
+    it("should store messageIndex on system parts when extracting via fromGenAI", () => {
+      const messages: GenAIMessage[] = [
+        { role: "system", parts: [{ type: "text", content: "First system" }] },
+        { role: "user", parts: [{ type: "text", content: "Hello" }] },
+        { role: "system", parts: [{ type: "text", content: "Second system" }] },
+      ];
+
+      const result = GenAISpecification.fromGenAI?.({
+        messages,
+        direction: "input",
+        providerMetadata: "preserve",
+      });
+
+      expect(result?.system).toHaveLength(2);
+
+      // First system part should have messageIndex 0
+      const meta0 = result?.system?.[0]?._provider_metadata as { _known_fields?: { messageIndex?: number } };
+      expect(meta0?._known_fields?.messageIndex).toBe(0);
+
+      // Second system part should have messageIndex 2
+      const meta1 = result?.system?.[1]?._provider_metadata as { _known_fields?: { messageIndex?: number } };
+      expect(meta1?._known_fields?.messageIndex).toBe(2);
+    });
+
+    it("should reconstruct system message positions in toGenAI using messageIndex", () => {
+      const system: GenAISystem = [
+        { type: "text", content: "First system", _provider_metadata: { _known_fields: { messageIndex: 0 } } },
+        { type: "text", content: "Second system", _provider_metadata: { _known_fields: { messageIndex: 2 } } },
+      ];
+      const messages: GenAIMessage[] = [
+        { role: "user", parts: [{ type: "text", content: "Hello" }] },
+        { role: "assistant", parts: [{ type: "text", content: "Hi" }] },
+      ];
+
+      const result = GenAISpecification.toGenAI({ messages, system, direction: "input" });
+
+      expect(result.messages).toHaveLength(4);
+      expect(result.messages[0]?.role).toBe("system");
+      expect(result.messages[0]?.parts[0]).toMatchObject({ type: "text", content: "First system" });
+      expect(result.messages[1]?.role).toBe("user");
+      expect(result.messages[2]?.role).toBe("system");
+      expect(result.messages[2]?.parts[0]).toMatchObject({ type: "text", content: "Second system" });
+      expect(result.messages[3]?.role).toBe("assistant");
+    });
+
+    it("should preserve system message order through round-trip (toGenAI -> fromGenAI -> toGenAI)", () => {
+      const originalMessages: GenAIMessage[] = [
+        { role: "system", parts: [{ type: "text", content: "Be helpful" }] },
+        { role: "user", parts: [{ type: "text", content: "Hello" }] },
+        { role: "system", parts: [{ type: "text", content: "Be concise" }] },
+        { role: "assistant", parts: [{ type: "text", content: "Hi!" }] },
+      ];
+
+      // Step 1: fromGenAI extracts system with indices
+      const fromResult = GenAISpecification.fromGenAI?.({
+        messages: originalMessages,
+        direction: "input",
+        providerMetadata: "preserve",
+      });
+
+      expect(fromResult?.messages).toHaveLength(2);
+      expect(fromResult?.system).toHaveLength(2);
+
+      // Step 2: toGenAI re-inserts system at original positions
+      const toResult = GenAISpecification.toGenAI({
+        messages: fromResult?.messages ?? [],
+        system: fromResult?.system,
+        direction: "input",
+      });
+
+      expect(toResult.messages).toHaveLength(4);
+      expect(toResult.messages[0]?.role).toBe("system");
+      expect(toResult.messages[0]?.parts[0]).toMatchObject({ type: "text", content: "Be helpful" });
+      expect(toResult.messages[1]?.role).toBe("user");
+      expect(toResult.messages[2]?.role).toBe("system");
+      expect(toResult.messages[2]?.parts[0]).toMatchObject({ type: "text", content: "Be concise" });
+      expect(toResult.messages[3]?.role).toBe("assistant");
+    });
+
+    it("should fall back to prepend when system parts have no messageIndex", () => {
+      const system: GenAISystem = [
+        { type: "text", content: "System A" },
+        { type: "text", content: "System B" },
+      ];
+      const messages: GenAIMessage[] = [{ role: "user", parts: [{ type: "text", content: "Hello" }] }];
+
+      const result = GenAISpecification.toGenAI({ messages, system, direction: "input" });
+
+      expect(result.messages).toHaveLength(2);
+      expect(result.messages[0]?.role).toBe("system");
+      expect(result.messages[0]?.parts).toHaveLength(2);
+      expect(result.messages[1]?.role).toBe("user");
+    });
+
+    it("should clamp out-of-bounds indices to array end", () => {
+      const system: GenAISystem = [
+        { type: "text", content: "A", _provider_metadata: { _known_fields: { messageIndex: 5 } } },
+        { type: "text", content: "B", _provider_metadata: { _known_fields: { messageIndex: 10 } } },
+      ];
+      const messages: GenAIMessage[] = [
+        { role: "user", parts: [{ type: "text", content: "Hello" }] },
+        { role: "assistant", parts: [{ type: "text", content: "Hi" }] },
+      ];
+
+      const result = GenAISpecification.toGenAI({ messages, system, direction: "input" });
+
+      // Both indices are beyond array length (2), so they get clamped to end
+      expect(result.messages).toHaveLength(4);
+      expect(result.messages[0]?.role).toBe("user");
+      expect(result.messages[1]?.role).toBe("assistant");
+      expect(result.messages[2]?.role).toBe("system");
+      expect(result.messages[3]?.role).toBe("system");
+    });
+
+    it("should keep index 0 system message at the beginning", () => {
+      const system: GenAISystem = [
+        { type: "text", content: "System", _provider_metadata: { _known_fields: { messageIndex: 0 } } },
+      ];
+      const messages: GenAIMessage[] = [
+        { role: "user", parts: [{ type: "text", content: "Hello" }] },
+        { role: "assistant", parts: [{ type: "text", content: "Hi" }] },
+      ];
+
+      const result = GenAISpecification.toGenAI({ messages, system, direction: "input" });
+
+      expect(result.messages).toHaveLength(3);
+      expect(result.messages[0]?.role).toBe("system");
+      expect(result.messages[1]?.role).toBe("user");
+      expect(result.messages[2]?.role).toBe("assistant");
+    });
+
+    it("should merge parts with the same messageIndex into a single system message", () => {
+      const system: GenAISystem = [
+        { type: "text", content: "Part A", _provider_metadata: { _known_fields: { messageIndex: 1 } } },
+        { type: "text", content: "Part B", _provider_metadata: { _known_fields: { messageIndex: 1 } } },
+      ];
+      const messages: GenAIMessage[] = [
+        { role: "user", parts: [{ type: "text", content: "Hello" }] },
+        { role: "assistant", parts: [{ type: "text", content: "Hi" }] },
+      ];
+
+      const result = GenAISpecification.toGenAI({ messages, system, direction: "input" });
+
+      expect(result.messages).toHaveLength(3);
+      expect(result.messages[0]?.role).toBe("user");
+      expect(result.messages[1]?.role).toBe("system");
+      expect(result.messages[1]?.parts).toHaveLength(2);
+      expect(result.messages[1]?.parts[0]).toMatchObject({ type: "text", content: "Part A" });
+      expect(result.messages[1]?.parts[1]).toMatchObject({ type: "text", content: "Part B" });
+      expect(result.messages[2]?.role).toBe("assistant");
+    });
+
+    it("should handle mixed parts with and without messageIndex (prepend those without)", () => {
+      const system: GenAISystem = [
+        { type: "text", content: "No index" },
+        { type: "text", content: "At pos 2", _provider_metadata: { _known_fields: { messageIndex: 2 } } },
+      ];
+      const messages: GenAIMessage[] = [
+        { role: "user", parts: [{ type: "text", content: "Hello" }] },
+        { role: "assistant", parts: [{ type: "text", content: "Hi" }] },
+      ];
+
+      const result = GenAISpecification.toGenAI({ messages, system, direction: "input" });
+
+      // The part without index goes to position 0 (prepended), the one with index goes to position 2
+      expect(result.messages).toHaveLength(4);
+      expect(result.messages[0]?.role).toBe("system");
+      expect(result.messages[0]?.parts[0]).toMatchObject({ type: "text", content: "No index" });
+      expect(result.messages[1]?.role).toBe("user");
+      expect(result.messages[2]?.role).toBe("system");
+      expect(result.messages[2]?.parts[0]).toMatchObject({ type: "text", content: "At pos 2" });
+      expect(result.messages[3]?.role).toBe("assistant");
+    });
+
+    it("should preserve multi-part system messages through fromGenAI with correct index", () => {
+      const messages: GenAIMessage[] = [
+        { role: "user", parts: [{ type: "text", content: "Hello" }] },
+        {
+          role: "system",
+          parts: [
+            { type: "text", content: "Part 1" },
+            { type: "text", content: "Part 2" },
+          ],
+        },
+        { role: "assistant", parts: [{ type: "text", content: "Hi!" }] },
+      ];
+
+      const fromResult = GenAISpecification.fromGenAI?.({
+        messages,
+        direction: "input",
+        providerMetadata: "preserve",
+      });
+
+      // Both parts should have messageIndex 1
+      expect(fromResult?.system).toHaveLength(2);
+      const meta0 = fromResult?.system?.[0]?._provider_metadata as { _known_fields?: { messageIndex?: number } };
+      const meta1 = fromResult?.system?.[1]?._provider_metadata as { _known_fields?: { messageIndex?: number } };
+      expect(meta0?._known_fields?.messageIndex).toBe(1);
+      expect(meta1?._known_fields?.messageIndex).toBe(1);
+
+      // Round-trip: toGenAI should merge them back at position 1
+      const toResult = GenAISpecification.toGenAI({
+        messages: fromResult?.messages ?? [],
+        system: fromResult?.system,
+        direction: "input",
+      });
+
+      expect(toResult.messages).toHaveLength(3);
+      expect(toResult.messages[0]?.role).toBe("user");
+      expect(toResult.messages[1]?.role).toBe("system");
+      expect(toResult.messages[1]?.parts).toHaveLength(2);
+      expect(toResult.messages[2]?.role).toBe("assistant");
     });
   });
 });

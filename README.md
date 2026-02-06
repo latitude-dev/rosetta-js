@@ -15,6 +15,7 @@ Rosetta converts messages between different LLM providers using [**GenAI**](http
 - 📝 Full TypeScript support with strict types
 - ✅ Runtime validation with Zod schemas
 - 💾 Preserve provider-specific metadata for lossless round-trips
+- 📌 System message order preservation - system messages retain their original position in conversation when translating between providers
 - 🌐 Works in Node.js and browsers
 - 🌳 Tree-shakeable ESM build
 
@@ -291,6 +292,8 @@ if (result.error) {
 - **toGenAI** = Can translate *from* this provider to GenAI (source)
 - **fromGenAI** = Can translate *to* this provider from GenAI (target)
 - **Separated System** = Provider separates system instructions from messages (use the `system` option if needed)
+
+**System message order preservation**: When translating to a provider that separates system instructions (like GenAI), system messages are extracted from the conversation and returned in the `system` field. Rosetta preserves the original position of each system message so that when translating back to a provider with inline system messages (like Promptl or Vercel AI), the system messages are re-inserted at their original positions in the conversation.
 
 ### Universal Compatibility
 

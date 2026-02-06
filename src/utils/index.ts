@@ -80,16 +80,22 @@ export type KnownFields = {
   isRefusal?: boolean;
   /** Original type when mapping to a different GenAI type (for lossy conversions) */
   originalType?: string;
+  /** Original message index for system parts extracted into a separate system array */
+  messageIndex?: number;
 };
 
 /**
  * Reads metadata from an entity, checking both casings (snake_case and camelCase).
  * This is necessary because messages may have been previously translated by Rosetta
  * with different target providers (GenAI uses snake_case, VercelAI uses camelCase).
+ * Returns undefined if metadata is not present or is an empty object.
  */
 export function readMetadata(entity: Record<string, unknown>): Record<string, unknown> | undefined {
   // biome-ignore lint/complexity/useLiteralKeys: required for index signature access
-  return (entity["_provider_metadata"] ?? entity["_providerMetadata"]) as Record<string, unknown> | undefined;
+  const metadata = (entity["_provider_metadata"] ?? entity["_providerMetadata"]) as Record<string, unknown> | undefined;
+  // Return undefined for empty objects to prevent empty metadata from propagating
+  if (!metadata || Object.keys(metadata).length === 0) return undefined;
+  return metadata;
 }
 
 /**
@@ -105,6 +111,7 @@ export function getKnownFields(metadata: Record<string, unknown> | undefined): K
     isError: known?.isError,
     isRefusal: known?.isRefusal,
     originalType: known?.originalType,
+    messageIndex: known?.messageIndex,
   };
 }
 
@@ -179,7 +186,8 @@ export function applyMetadataMode<T extends object>(
   mode: ProviderMetadataMode,
   useCamelCase = true,
 ): T {
-  if (!metadata) return entity;
+  // Return early if no metadata or empty metadata object
+  if (!metadata || Object.keys(metadata).length === 0) return entity;
 
   switch (mode) {
     case "strip":

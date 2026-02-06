@@ -21,6 +21,8 @@ export const KnownFieldsSchema = z
     isRefusal: z.boolean().optional(),
     /** Original type when mapping to a different GenAI type (for lossy conversions) */
     originalType: z.string().optional(),
+    /** Original message index for system parts extracted into a separate system array */
+    messageIndex: z.number().optional(),
   })
   .passthrough();
 

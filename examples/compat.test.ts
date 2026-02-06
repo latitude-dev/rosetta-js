@@ -254,7 +254,7 @@ describe("Compat E2E", () => {
       // GenAI's fromGenAI separates system messages into result.system
       expect(result.messages).toHaveLength(3); // Non-system messages
       expect(result.system).toBeDefined();
-      expect(result.system?.[0]).toEqual({ type: "text", content: "You are helpful" });
+      expect(result.system?.[0]).toMatchObject({ type: "text", content: "You are helpful" });
 
       expect(result.messages[0]?.parts[0]?.type).toBe("tool_call");
       expect(result.messages[1]?.parts[0]?.type).toBe("tool_call_response");
@@ -274,7 +274,7 @@ describe("Compat E2E", () => {
       expect(result.messages).toHaveLength(0);
       expect(result.system).toBeDefined();
       expect(result.system).toHaveLength(1);
-      expect(result.system?.[0]).toEqual({
+      expect(result.system?.[0]).toMatchObject({
         type: "text",
         content: "You are a helpful assistant specialized in coding.",
       });
@@ -289,7 +289,7 @@ describe("Compat E2E", () => {
 
       // GenAI's fromGenAI separates system into result.system
       expect(result.system).toBeDefined();
-      expect(result.system?.[0]).toEqual({
+      expect(result.system?.[0]).toMatchObject({
         type: "text",
         content: "System prompt here",
       });
