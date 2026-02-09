@@ -38,6 +38,20 @@ describe("AnthropicSpecification", () => {
           content: "I'm doing great!",
         });
       });
+
+      it("should include system instructions when messages is a string", () => {
+        const result = AnthropicSpecification.toGenAI({
+          messages: "Hello",
+          system: "You are a pirate.",
+          direction: "input",
+        });
+
+        expect(result.messages).toHaveLength(2);
+        expect(result.messages[0]?.role).toBe("system");
+        expect(result.messages[0]?.parts[0]).toEqual({ type: "text", content: "You are a pirate." });
+        expect(result.messages[1]?.role).toBe("user");
+        expect(result.messages[1]?.parts[0]).toEqual({ type: "text", content: "Hello" });
+      });
     });
 
     describe("system instructions", () => {

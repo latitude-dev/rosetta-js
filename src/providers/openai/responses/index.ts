@@ -25,12 +25,10 @@ export const OpenAIResponsesSpecification = {
   messageSchema: OpenAIResponsesItemSchema,
 
   toGenAI({ messages, direction }: ProviderToGenAIArgs) {
-    // Handle string input
+    // Handle string input - wrap in OpenAI Responses format then fall through
     if (typeof messages === "string") {
       const role = direction === "input" ? "user" : "assistant";
-      return {
-        messages: [{ role, parts: [{ type: "text" as const, content: messages }] }],
-      };
+      messages = [{ role, content: messages }];
     }
 
     // Validate with schema

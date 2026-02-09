@@ -46,12 +46,11 @@ export const CompatSpecification = {
   systemSchema: CompatSystemSchema,
 
   toGenAI({ messages, system, direction }: ProviderToGenAIArgs) {
-    // Handle string input
+    // Handle string input - wrap in compat format then fall through
+    // (avoids skipping system instruction handling below)
     if (typeof messages === "string") {
       const role = direction === "input" ? "user" : "assistant";
-      return {
-        messages: [{ role, parts: [{ type: "text" as const, content: messages }] }],
-      };
+      messages = [{ role, content: messages }];
     }
 
     // Validate with permissive schema
@@ -203,7 +202,8 @@ function convertMessage(message: CompatMessage, direction: "input" | "output"): 
 
   // Handle tool response message (role: tool with tool_call_id)
   if ((role === "tool" || role === "function") && parts.length > 0) {
-    const toolCallId = get(normalized, "toolCallId") ?? get(normalized, "toolUseId") ?? null;
+    const toolCallId =
+      get(normalized, "toolCallId") ?? get(normalized, "toolUseId") ?? get(normalized, "toolId") ?? null;
     const toolName = get(normalized, "name") ?? get(normalized, "toolName");
 
     // Check if we already have tool_call_response parts from content
@@ -331,6 +331,11 @@ function convertTypedPart(part: Obj, type: string): GenAIPart[] {
       if (url) {
         return [convertImageUrl(url, part)];
       }
+      // Handle image_url as a direct string (data URI or URL)
+      const imageUrlStr = getString(part, "imageUrl");
+      if (imageUrlStr) {
+        return [convertImageUrl(imageUrlStr, part)];
+      }
       return [];
     }
 
@@ -344,6 +349,21 @@ function convertTypedPart(part: Obj, type: string): GenAIPart[] {
       const image = getString(part, "image");
       if (image) {
         return [convertImageUrl(image, part)];
+      }
+      // Fallback: check url or data fields
+      const imageUri = getString(part, "url") ?? getString(part, "uri");
+      if (imageUri) {
+        return [convertImageUrl(imageUri, part)];
+      }
+      const imageData = getString(part, "data");
+      const imageMime = getString(part, "mediaType") ?? getString(part, "mimeType");
+      if (imageData) {
+        if (imageData.startsWith("data:")) {
+          return [convertImageUrl(imageData, part)];
+        }
+        return [
+          { type: "blob", modality: "image", content: imageData, ...(imageMime ? { mime_type: imageMime } : {}) },
+        ];
       }
       return [];
     }
@@ -381,6 +401,29 @@ function convertTypedPart(part: Obj, type: string): GenAIPart[] {
         if (fileData) {
           return [{ type: "blob", modality, content: fileData, ...(mimeType ? { mime_type: mimeType } : {}) }];
         }
+      }
+
+      // Handle file field as string (data URI, URL, or filename)
+      const fileStr = getString(part, "file");
+      if (fileStr) {
+        const mimeType = getString(part, "mediaType") ?? getString(part, "mimeType");
+        const modality = inferModality(mimeType);
+
+        if (fileStr.startsWith("data:")) {
+          const match = fileStr.match(/^data:([^;,]+)?(?:;base64)?,(.*)$/);
+          if (match) {
+            const parsedMime = match[1] || mimeType || "application/octet-stream";
+            const data = match[2] || "";
+            return [{ type: "blob", modality: inferModality(parsedMime), mime_type: parsedMime, content: data }];
+          }
+        }
+
+        if (isUrlString(fileStr)) {
+          return [{ type: "uri", modality, uri: fileStr, ...(mimeType ? { mime_type: mimeType } : {}) }];
+        }
+
+        // Treat as file ID
+        return [{ type: "file", modality, file_id: fileStr, ...(mimeType ? { mime_type: mimeType } : {}) }];
       }
 
       if (source) {

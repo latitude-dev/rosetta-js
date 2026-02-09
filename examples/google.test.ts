@@ -6,7 +6,7 @@
  * This is a source-only provider, so only toGenAI translations are tested.
  */
 
-import { GoogleGenAI } from "@google/genai";
+import { FunctionCallingConfigMode, GoogleGenAI, Type } from "@google/genai";
 import { Provider, translate } from "rosetta-ai";
 import { describe, expect, it } from "vitest";
 
@@ -79,9 +79,9 @@ describe("Google Gemini E2E", () => {
                   name: "get_weather",
                   description: "Get the current weather for a location",
                   parameters: {
-                    type: "OBJECT",
+                    type: Type.OBJECT,
                     properties: {
-                      location: { type: "STRING", description: "The city name" },
+                      location: { type: Type.STRING, description: "The city name" },
                     },
                     required: ["location"],
                   },
@@ -91,7 +91,7 @@ describe("Google Gemini E2E", () => {
           ],
           toolConfig: {
             functionCallingConfig: {
-              mode: "ANY",
+              mode: FunctionCallingConfigMode.ANY,
             },
           },
         },
@@ -411,7 +411,8 @@ describe("Google Gemini E2E", () => {
 
       expect(result.messages).toHaveLength(1);
       expect(result.messages[0]?.parts[0]?.type).toBe("executable_code");
-      expect((result.messages[0]?.parts[0] as { code: string }).code).toBe("print('Hello, world!')");
+      // biome-ignore lint/suspicious/noExplicitAny: GenAI generic part types need cast
+      expect((result.messages[0]?.parts[0] as any).code).toBe("print('Hello, world!')");
     });
 
     it("should translate code execution results", () => {
@@ -436,7 +437,8 @@ describe("Google Gemini E2E", () => {
 
       expect(result.messages).toHaveLength(1);
       expect(result.messages[0]?.parts[0]?.type).toBe("code_execution_result");
-      expect((result.messages[0]?.parts[0] as { output: string }).output).toBe("Hello, world!");
+      // biome-ignore lint/suspicious/noExplicitAny: GenAI generic part types need cast
+      expect((result.messages[0]?.parts[0] as any).output).toBe("Hello, world!");
     });
 
     it("should auto-detect Google format", () => {
@@ -509,6 +511,23 @@ describe("Google Gemini E2E", () => {
       expect(result.messages[0]?.role).toBe("user");
     });
 
+    it("should not auto-infer Google for non-Google messages (inference fix)", () => {
+      // Messages without 'parts' field should NOT match Google format
+      const openaiMessages = [
+        { role: "user" as const, content: "Hello" },
+        { role: "assistant" as const, content: "Hi there!" },
+      ];
+
+      // Without specifying 'from', these should NOT be inferred as Google
+      const result = translate(openaiMessages);
+
+      // The key assertion: messages should have actual text content, not empty
+      // parts with everything stuffed into _provider_metadata
+      expect(result.messages).toHaveLength(2);
+      expect(result.messages[0]?.parts[0]?.type).toBe("text");
+      expect((result.messages[0]?.parts[0] as { content: string }).content).toBe("Hello");
+    });
+
     it("should handle multiple parts in single message", () => {
       const geminiMessages = [
         {
@@ -530,6 +549,119 @@ describe("Google Gemini E2E", () => {
       expect(result.messages[0]?.parts[0]?.type).toBe("text");
       expect(result.messages[0]?.parts[1]?.type).toBe("blob");
       expect(result.messages[0]?.parts[2]?.type).toBe("text");
+    });
+
+    it("should translate string input through Google conversion pipeline", () => {
+      const result = translate("Hello from Gemini", {
+        from: Provider.Google,
+        to: Provider.GenAI,
+        direction: "input",
+      });
+
+      expect(result.messages).toHaveLength(1);
+      expect(result.messages[0]?.role).toBe("user");
+      expect(result.messages[0]?.parts[0]).toEqual({ type: "text", content: "Hello from Gemini" });
+    });
+
+    it("should translate string output with model->assistant role mapping", () => {
+      const result = translate("Model response", {
+        from: Provider.Google,
+        to: Provider.GenAI,
+        direction: "output",
+      });
+
+      expect(result.messages).toHaveLength(1);
+      expect(result.messages[0]?.role).toBe("assistant");
+      expect(result.messages[0]?.parts[0]).toEqual({ type: "text", content: "Model response" });
+    });
+
+    it("should translate function call without args", () => {
+      const geminiMessages = [
+        {
+          role: "model",
+          parts: [{ functionCall: { name: "get_status" } }],
+        },
+      ];
+
+      const result = translate(geminiMessages, {
+        from: Provider.Google,
+        to: Provider.GenAI,
+      });
+
+      expect(result.messages[0]?.parts[0]?.type).toBe("tool_call");
+      // biome-ignore lint/suspicious/noExplicitAny: testing tool_call fields
+      const toolCall = result.messages[0]?.parts[0] as any;
+      expect(toolCall.name).toBe("get_status");
+      expect(toolCall.arguments).toBeUndefined();
+    });
+
+    it("should detect error in function response and set isError known field", () => {
+      const geminiMessages = [
+        {
+          role: "user",
+          parts: [
+            {
+              functionResponse: {
+                name: "get_weather",
+                response: { error: "API rate limit exceeded" },
+              },
+            },
+          ],
+        },
+      ];
+
+      const result = translate(geminiMessages, {
+        from: Provider.Google,
+        to: Provider.GenAI,
+      });
+
+      expect(result.messages[0]?.parts[0]?.type).toBe("tool_call_response");
+      // biome-ignore lint/suspicious/noExplicitAny: checking metadata known fields
+      const knownFields = (result.messages[0]?.parts[0]?._provider_metadata as any)?._known_fields;
+      expect(knownFields?.isError).toBe(true);
+      expect(knownFields?.toolName).toBe("get_weather");
+    });
+
+    it("should preserve FunctionResponse extra fields in metadata", () => {
+      const geminiMessages = [
+        {
+          role: "user",
+          parts: [
+            {
+              functionResponse: {
+                name: "stream_data",
+                response: { status: "ok" },
+                willContinue: true,
+                scheduling: "WHEN_IDLE",
+              },
+            },
+          ],
+        },
+      ];
+
+      const result = translate(geminiMessages, {
+        from: Provider.Google,
+        to: Provider.GenAI,
+      });
+
+      expect(result.messages[0]?.parts[0]?.type).toBe("tool_call_response");
+      const metadata = result.messages[0]?.parts[0]?._provider_metadata;
+      expect(metadata).toBeDefined();
+      expect(metadata).toMatchObject({
+        willContinue: true,
+        scheduling: "WHEN_IDLE",
+      });
+    });
+
+    it("should reject non-Google messages when from is Google", () => {
+      const openaiMessages = [{ role: "user", content: "Hello" }];
+
+      expect(() =>
+        translate(openaiMessages, {
+          from: Provider.Google,
+          to: Provider.GenAI,
+        }),
+      ).toThrow();
     });
   });
 });

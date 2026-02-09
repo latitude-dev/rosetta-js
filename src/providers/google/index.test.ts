@@ -26,18 +26,33 @@ describe("GoogleSpecification", () => {
         });
       });
 
-      it("should convert string to model message for output direction", () => {
+      it("should convert string to assistant message for output direction", () => {
+        // String is first wrapped as Google format with role "model",
+        // then converted to GenAI where mapRole maps "model" -> "assistant"
         const result = GoogleSpecification.toGenAI({
           messages: "I'm doing great!",
           direction: "output",
         });
 
         expect(result.messages).toHaveLength(1);
-        expect(result.messages[0]?.role).toBe("model");
+        expect(result.messages[0]?.role).toBe("assistant");
         expect(result.messages[0]?.parts[0]).toEqual({
           type: "text",
           content: "I'm doing great!",
         });
+      });
+
+      it("should include system instructions when messages is a string", () => {
+        const result = GoogleSpecification.toGenAI({
+          messages: "Hello",
+          system: "You are a pirate.",
+          direction: "input",
+        });
+
+        expect(result.messages).toHaveLength(2);
+        expect(result.messages[0]?.role).toBe("system");
+        expect(result.messages[0]?.parts[0]).toEqual({ type: "text", content: "You are a pirate." });
+        expect(result.messages[1]?.role).toBe("user");
       });
     });
 
@@ -306,6 +321,31 @@ describe("GoogleSpecification", () => {
           name: "search",
         });
       });
+
+      it("should convert function call without args", () => {
+        const result = GoogleSpecification.toGenAI({
+          messages: [
+            {
+              role: "model",
+              parts: [
+                {
+                  functionCall: {
+                    name: "get_status",
+                  },
+                },
+              ],
+            },
+          ],
+          direction: "output",
+        });
+
+        expect(result.messages[0]?.parts[0]).toMatchObject({
+          type: "tool_call",
+          id: null,
+          name: "get_status",
+          arguments: undefined,
+        });
+      });
     });
 
     describe("function responses", () => {
@@ -361,6 +401,87 @@ describe("GoogleSpecification", () => {
         expect(result.messages[0]?.parts[0]).toMatchObject({
           type: "tool_call_response",
           id: "call_123",
+        });
+      });
+
+      it("should set isError known field when response has 'error' key", () => {
+        const result = GoogleSpecification.toGenAI({
+          messages: [
+            {
+              role: "user",
+              parts: [
+                {
+                  functionResponse: {
+                    name: "get_weather",
+                    response: { error: "API rate limit exceeded" },
+                  },
+                },
+              ],
+            },
+          ],
+          direction: "input",
+        });
+
+        // isError should be stored in _known_fields for cross-provider access
+        expect(
+          // biome-ignore lint/complexity/useLiteralKeys: required for index signature access
+          (result.messages[0]?.parts[0]?._provider_metadata?._known_fields as Record<string, unknown>)?.["isError"],
+        ).toBe(true);
+      });
+
+      it("should not set isError when response has no 'error' key", () => {
+        const result = GoogleSpecification.toGenAI({
+          messages: [
+            {
+              role: "user",
+              parts: [
+                {
+                  functionResponse: {
+                    name: "get_weather",
+                    response: { temperature: 72 },
+                  },
+                },
+              ],
+            },
+          ],
+          direction: "input",
+        });
+
+        // _known_fields should NOT have isError
+        const knownFields = result.messages[0]?.parts[0]?._provider_metadata?._known_fields as
+          | Record<string, unknown>
+          | undefined;
+        // biome-ignore lint/complexity/useLiteralKeys: required for index signature access
+        expect(knownFields?.["isError"]).toBeUndefined();
+      });
+
+      it("should preserve FunctionResponse extra fields (parts, willContinue, scheduling) in metadata", () => {
+        const result = GoogleSpecification.toGenAI({
+          messages: [
+            {
+              role: "user",
+              parts: [
+                {
+                  functionResponse: {
+                    name: "stream_data",
+                    response: { status: "ok" },
+                    willContinue: true,
+                    scheduling: "WHEN_IDLE",
+                    parts: [{ inlineData: { mimeType: "image/png", data: "base64img" } }],
+                  },
+                },
+              ],
+            },
+          ],
+          direction: "input",
+        });
+
+        const metadata = result.messages[0]?.parts[0]?._provider_metadata;
+        expect(metadata).toBeDefined();
+        expect(metadata).toMatchObject({
+          willContinue: true,
+          scheduling: "WHEN_IDLE",
+          parts: [{ inlineData: { mimeType: "image/png", data: "base64img" } }],
         });
       });
     });
@@ -542,39 +663,33 @@ describe("GoogleSpecification", () => {
         expect(result.messages[0]?.parts).toHaveLength(0);
       });
 
-      it("should handle undefined parts", () => {
-        const result = GoogleSpecification.toGenAI({
-          messages: [{ role: "user" }],
-          direction: "input",
-        });
-
-        expect(result.messages).toHaveLength(1);
-        expect(result.messages[0]?.parts).toHaveLength(0);
+      it("should reject messages without parts", () => {
+        expect(() =>
+          GoogleSpecification.toGenAI({
+            messages: [{ role: "user" }],
+            direction: "input",
+          }),
+        ).toThrow();
       });
 
-      it("should handle missing mimeType in inline data", () => {
-        const result = GoogleSpecification.toGenAI({
-          messages: [
-            {
-              role: "user",
-              parts: [
-                {
-                  inlineData: {
-                    data: "base64data",
+      it("should reject inline data without mimeType", () => {
+        expect(() =>
+          GoogleSpecification.toGenAI({
+            messages: [
+              {
+                role: "user",
+                parts: [
+                  {
+                    inlineData: {
+                      data: "base64data",
+                    },
                   },
-                },
-              ],
-            },
-          ],
-          direction: "input",
-        });
-
-        expect(result.messages[0]?.parts[0]).toMatchObject({
-          type: "blob",
-          modality: "document",
-          mime_type: null,
-          content: "base64data",
-        });
+                ],
+              },
+            ],
+            direction: "input",
+          }),
+        ).toThrow();
       });
 
       it("should reject parts without Google-specific fields", () => {
@@ -701,6 +816,165 @@ describe("GoogleSpecification", () => {
         const result = GooglePartSchema.safeParse(part);
         expect(result.success).toBe(true);
       });
+
+      it("should validate function call without args (args is optional)", () => {
+        const part = {
+          functionCall: {
+            name: "get_status",
+          },
+        };
+        const result = GooglePartSchema.safeParse(part);
+        expect(result.success).toBe(true);
+      });
+
+      it("should reject function call with non-object args", () => {
+        const part = {
+          functionCall: {
+            name: "test",
+            args: "not an object",
+          },
+        };
+        const result = GooglePartSchema.safeParse(part);
+        expect(result.success).toBe(false);
+      });
+
+      it("should reject function call without name", () => {
+        const part = {
+          functionCall: {
+            args: { city: "NYC" },
+          },
+        };
+        const result = GooglePartSchema.safeParse(part);
+        expect(result.success).toBe(false);
+      });
+
+      it("should reject function response without name", () => {
+        const part = {
+          functionResponse: {
+            response: { temperature: 72 },
+          },
+        };
+        const result = GooglePartSchema.safeParse(part);
+        expect(result.success).toBe(false);
+      });
+
+      it("should reject function response without response", () => {
+        const part = {
+          functionResponse: {
+            name: "get_weather",
+          },
+        };
+        const result = GooglePartSchema.safeParse(part);
+        expect(result.success).toBe(false);
+      });
+
+      it("should reject inline data without mimeType", () => {
+        const part = {
+          inlineData: {
+            data: "base64data",
+          },
+        };
+        const result = GooglePartSchema.safeParse(part);
+        expect(result.success).toBe(false);
+      });
+
+      it("should reject inline data without data", () => {
+        const part = {
+          inlineData: {
+            mimeType: "image/png",
+          },
+        };
+        const result = GooglePartSchema.safeParse(part);
+        expect(result.success).toBe(false);
+      });
+
+      it("should reject file data without fileUri", () => {
+        const part = {
+          fileData: {
+            mimeType: "video/mp4",
+          },
+        };
+        const result = GooglePartSchema.safeParse(part);
+        expect(result.success).toBe(false);
+      });
+
+      it("should validate file data without mimeType", () => {
+        const part = {
+          fileData: {
+            fileUri: "gs://bucket/file.mp4",
+          },
+        };
+        const result = GooglePartSchema.safeParse(part);
+        expect(result.success).toBe(true);
+      });
+
+      it("should reject executable code without code", () => {
+        const part = {
+          executableCode: {
+            language: "PYTHON",
+          },
+        };
+        const result = GooglePartSchema.safeParse(part);
+        expect(result.success).toBe(false);
+      });
+
+      it("should reject executable code without language", () => {
+        const part = {
+          executableCode: {
+            code: "print('hello')",
+          },
+        };
+        const result = GooglePartSchema.safeParse(part);
+        expect(result.success).toBe(false);
+      });
+
+      it("should reject code execution result without outcome", () => {
+        const part = {
+          codeExecutionResult: {
+            output: "hello",
+          },
+        };
+        const result = GooglePartSchema.safeParse(part);
+        expect(result.success).toBe(false);
+      });
+
+      it("should validate code execution result without output", () => {
+        const part = {
+          codeExecutionResult: {
+            outcome: "OUTCOME_OK",
+          },
+        };
+        const result = GooglePartSchema.safeParse(part);
+        expect(result.success).toBe(true);
+      });
+    });
+
+    describe("GoogleContentSchema - parts is required", () => {
+      it("should reject content without parts", () => {
+        const content = { role: "user" };
+        const result = GoogleContentSchema.safeParse(content);
+        expect(result.success).toBe(false);
+      });
+
+      it("should reject content with non-array parts", () => {
+        const content = { role: "user", parts: "not an array" };
+        const result = GoogleContentSchema.safeParse(content);
+        expect(result.success).toBe(false);
+      });
+
+      it("should accept content with empty parts array", () => {
+        const content = { role: "user", parts: [] };
+        const result = GoogleContentSchema.safeParse(content);
+        expect(result.success).toBe(true);
+      });
+
+      it("should not match non-Google messages (no parts field)", () => {
+        // This is the key inference fix - messages from other providers without
+        // a 'parts' field should NOT match GoogleContentSchema
+        const openaiMessage = { role: "user", content: "Hello" };
+        const result = GoogleContentSchema.safeParse(openaiMessage);
+        expect(result.success).toBe(false);
+      });
     });
   });
 
@@ -770,6 +1044,26 @@ describe("GoogleSpecification", () => {
       if (result.success && result.data.functionCall) {
         expect(result.data.functionCall).toHaveProperty("partialArgs");
         expect(result.data.functionCall).toHaveProperty("willContinue", true);
+      }
+    });
+
+    it("should preserve FunctionResponse extra fields (parts, willContinue, scheduling) during schema parsing", () => {
+      const part = {
+        functionResponse: {
+          name: "stream_data",
+          response: { status: "ok" },
+          willContinue: true,
+          scheduling: "WHEN_IDLE",
+          parts: [{ inlineData: { mimeType: "image/png", data: "base64img" } }],
+        },
+      };
+
+      const result = GooglePartSchema.safeParse(part);
+      expect(result.success).toBe(true);
+      if (result.success && result.data.functionResponse) {
+        expect(result.data.functionResponse).toHaveProperty("willContinue", true);
+        expect(result.data.functionResponse).toHaveProperty("scheduling", "WHEN_IDLE");
+        expect(result.data.functionResponse).toHaveProperty("parts");
       }
     });
   });

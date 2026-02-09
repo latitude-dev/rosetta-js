@@ -499,7 +499,8 @@ export const NewProviderSpecification = {
   // systemSchema: NewProviderSystemSchema, // Only if separated from messages
 
   toGenAI({ messages, direction }: ProviderToGenAIArgs) {
-    // Handle string input - use direction to set role
+    // Handle string input - wrap in provider-native format then fall through
+    // IMPORTANT: Never early-return here; the rest of the pipeline handles system, etc.
     if (typeof messages === "string") {
       const role = direction === "input" ? "user" : "assistant";
       messages = [{ role, content: messages }];
@@ -549,16 +550,30 @@ The `direction` parameter indicates whether messages are being prepared for mode
 
 **Use direction for string input:**
 
+**IMPORTANT**: When handling string input, wrap it in the **provider's native message format** and assign back to `messages` so execution falls through to the normal conversion pipeline. **Never use an early `return`** for string handling. An early return bypasses all downstream logic (e.g., system instruction handling, schema validation), which causes bugs like system instructions being silently ignored when `messages` is a string.
+
 ```typescript
-toGenAI({ messages, direction }) {
+toGenAI({ messages, system, direction }) {
+  // Wrap string in the provider's native format, then fall through
   if (typeof messages === "string") {
-    // Input: treat as user message, Output: treat as assistant response
     const role = direction === "input" ? "user" : "assistant";
-    messages = [{ role, content: messages }];
+    messages = [{ role, content: messages }]; // Provider-native format, NOT GenAI format
   }
-  // Validate and use parsedMessages for type-safe iteration
+
+  // String input now flows through the same pipeline as array input:
+  // schema validation, system instruction handling, message conversion, etc.
   const parsedMessages = MessageSchema.array().parse(messages);
   // ...
+}
+```
+
+For providers with non-standard roles (e.g., Google uses `"model"` instead of `"assistant"`), use the **provider's role** in the wrapped message. The normal conversion pipeline will map it to GenAI's role later:
+
+```typescript
+// Google provider example - uses "model" role natively
+if (typeof messages === "string") {
+  const role = direction === "input" ? "user" : "model";
+  messages = [{ role, parts: [{ text: messages }] }]; // Google-native format
 }
 ```
 

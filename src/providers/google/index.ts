@@ -31,12 +31,11 @@ export const GoogleSpecification = {
   systemSchema: GoogleSystemSchema,
 
   toGenAI({ messages, system, direction }: ProviderToGenAIArgs) {
-    // Handle string input
+    // Handle string input - wrap in Google format (role: "user"/"model", parts with text)
+    // then fall through to the normal conversion pipeline
     if (typeof messages === "string") {
       const role = direction === "input" ? "user" : "model";
-      return {
-        messages: [{ role, parts: [{ type: "text" as const, content: messages }] }],
-      };
+      messages = [{ role, parts: [{ text: messages }] }];
     }
 
     // Validate with schema
@@ -104,7 +103,7 @@ function googleContentToGenAI(content: GoogleContent, direction: "input" | "outp
   const parts: GenAIPart[] = [];
 
   // Convert each part
-  for (const part of content.parts ?? []) {
+  for (const part of content.parts) {
     parts.push(...convertPart(part));
   }
 
@@ -180,8 +179,8 @@ function convertPart(part: GooglePart): GenAIPart[] {
       {
         type: "blob",
         modality,
-        mime_type: blob.mimeType ?? null,
-        content: blob.data ?? "",
+        mime_type: blob.mimeType,
+        content: blob.data,
         ...(metadata ? { _provider_metadata: metadata } : {}),
       },
     ];
@@ -198,7 +197,7 @@ function convertPart(part: GooglePart): GenAIPart[] {
         type: "uri",
         modality,
         mime_type: file.mimeType ?? null,
-        uri: file.fileUri ?? "",
+        uri: file.fileUri,
         ...(metadata ? { _provider_metadata: metadata } : {}),
       },
     ];
@@ -213,7 +212,7 @@ function convertPart(part: GooglePart): GenAIPart[] {
       {
         type: "tool_call",
         id: fc.id ?? null,
-        name: fc.name ?? "",
+        name: fc.name,
         arguments: fc.args,
         ...(metadata ? { _provider_metadata: metadata } : {}),
       },
@@ -224,11 +223,15 @@ function convertPart(part: GooglePart): GenAIPart[] {
   if (part.functionResponse !== undefined) {
     const fr = part.functionResponse;
     const frExtra = extractExtraFields(fr, ["id", "name", "response"] as (keyof typeof fr)[]);
-    // Store toolName in known fields
+    // Detect error: per Gemini docs, a failed function call has an "error" key in the response
+    const isError = "error" in (fr.response as Record<string, unknown>);
     const metadata = storeMetadata(
       existingMetadata,
       { ...extraFields, ...frExtra },
-      fr.name ? { toolName: fr.name } : {},
+      {
+        toolName: fr.name,
+        ...(isError ? { isError: true } : {}),
+      },
     );
     return [
       {
@@ -248,7 +251,7 @@ function convertPart(part: GooglePart): GenAIPart[] {
     return [
       {
         type: "executable_code",
-        code: code.code ?? "",
+        code: code.code,
         language: code.language,
         ...(metadata ? { _provider_metadata: metadata } : {}),
       } as GenAIPart,

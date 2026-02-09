@@ -24,6 +24,20 @@ describe("CompatSpecification", () => {
       expect(result.messages[0]?.role).toBe("assistant");
       expect(result.messages[0]?.parts[0]).toEqual({ type: "text", content: "Response" });
     });
+
+    it("should include system instructions when messages is a string", () => {
+      const result = CompatSpecification.toGenAI({
+        messages: "Hello",
+        system: "You are a pirate.",
+        direction: "input",
+      });
+
+      expect(result.messages).toHaveLength(2);
+      expect(result.messages[0]?.role).toBe("system");
+      expect(result.messages[0]?.parts[0]).toEqual({ type: "text", content: "You are a pirate." });
+      expect(result.messages[1]?.role).toBe("user");
+      expect(result.messages[1]?.parts[0]).toEqual({ type: "text", content: "Hello" });
+    });
   });
 
   describe("role detection", () => {
@@ -117,6 +131,84 @@ describe("CompatSpecification", () => {
       });
     });
 
+    it("should handle image_url as a direct data URI string", () => {
+      const messages = [
+        {
+          role: "user",
+          content: [{ type: "image_url", image_url: "data:image/jpeg;base64,/9j/4AAQ==" }],
+        },
+      ];
+      const result = CompatSpecification.toGenAI({ messages, direction: "input" });
+      expect(result.messages[0]?.parts[0]).toEqual({
+        type: "blob",
+        modality: "image",
+        mime_type: "image/jpeg",
+        content: "/9j/4AAQ==",
+      });
+    });
+
+    it("should handle image_url as a direct URL string", () => {
+      const messages = [
+        {
+          role: "user",
+          content: [{ type: "image_url", image_url: "https://example.com/photo.jpg" }],
+        },
+      ];
+      const result = CompatSpecification.toGenAI({ messages, direction: "input" });
+      expect(result.messages[0]?.parts[0]).toEqual({
+        type: "uri",
+        modality: "image",
+        uri: "https://example.com/photo.jpg",
+      });
+    });
+
+    it("should handle image type with url field", () => {
+      const messages = [
+        {
+          role: "user",
+          content: [{ type: "image", url: "https://example.com/photo.png" }],
+        },
+      ];
+      const result = CompatSpecification.toGenAI({ messages, direction: "input" });
+      expect(result.messages[0]?.parts[0]).toEqual({
+        type: "uri",
+        modality: "image",
+        uri: "https://example.com/photo.png",
+      });
+    });
+
+    it("should handle image type with data field (base64)", () => {
+      const messages = [
+        {
+          role: "user",
+          content: [{ type: "image", data: "iVBORw0KGgo=", mimeType: "image/png" }],
+        },
+      ];
+      const result = CompatSpecification.toGenAI({ messages, direction: "input" });
+      expect(result.messages[0]?.parts[0]).toEqual({
+        type: "blob",
+        modality: "image",
+        content: "iVBORw0KGgo=",
+        mime_type: "image/png",
+      });
+    });
+
+    it("should handle image type with data field as data URI", () => {
+      const messages = [
+        {
+          role: "user",
+          content: [{ type: "image", data: "data:image/webp;base64,UklGR==" }],
+        },
+      ];
+      const result = CompatSpecification.toGenAI({ messages, direction: "input" });
+      expect(result.messages[0]?.parts[0]).toEqual({
+        type: "blob",
+        modality: "image",
+        mime_type: "image/webp",
+        content: "UklGR==",
+      });
+    });
+
     it("should handle input_audio content parts", () => {
       const messages = [
         {
@@ -130,6 +222,138 @@ describe("CompatSpecification", () => {
         modality: "audio",
         mime_type: "audio/wav",
         content: "audiodata",
+      });
+    });
+  });
+
+  describe("file content", () => {
+    it("should handle file part with data URI string", () => {
+      const messages = [
+        {
+          role: "user",
+          content: [
+            {
+              type: "file",
+              file: "data:text/csv;base64,bmFtZSxhZ2UsY2l0eQ==",
+              mimeType: "text/csv",
+            },
+          ],
+        },
+      ];
+      const result = CompatSpecification.toGenAI({ messages, direction: "input" });
+      expect(result.messages[0]?.parts[0]).toEqual({
+        type: "blob",
+        modality: "document",
+        mime_type: "text/csv",
+        content: "bmFtZSxhZ2UsY2l0eQ==",
+      });
+    });
+
+    it("should handle file part with URL string", () => {
+      const messages = [
+        {
+          role: "user",
+          content: [
+            {
+              type: "file",
+              file: "https://example.com/report.pdf",
+              mimeType: "application/pdf",
+            },
+          ],
+        },
+      ];
+      const result = CompatSpecification.toGenAI({ messages, direction: "input" });
+      expect(result.messages[0]?.parts[0]).toEqual({
+        type: "uri",
+        modality: "document",
+        uri: "https://example.com/report.pdf",
+        mime_type: "application/pdf",
+      });
+    });
+
+    it("should handle file part with file ID string", () => {
+      const messages = [
+        {
+          role: "user",
+          content: [
+            {
+              type: "file",
+              file: "file-abc123",
+              mimeType: "application/pdf",
+            },
+          ],
+        },
+      ];
+      const result = CompatSpecification.toGenAI({ messages, direction: "input" });
+      expect(result.messages[0]?.parts[0]).toEqual({
+        type: "file",
+        modality: "document",
+        file_id: "file-abc123",
+        mime_type: "application/pdf",
+      });
+    });
+
+    it("should infer mime type from data URI when mimeType not provided", () => {
+      const messages = [
+        {
+          role: "user",
+          content: [
+            {
+              type: "file",
+              file: "data:image/png;base64,iVBORw0KGgo=",
+            },
+          ],
+        },
+      ];
+      const result = CompatSpecification.toGenAI({ messages, direction: "input" });
+      expect(result.messages[0]?.parts[0]).toEqual({
+        type: "blob",
+        modality: "image",
+        mime_type: "image/png",
+        content: "iVBORw0KGgo=",
+      });
+    });
+
+    it("should handle file part with object file field (OpenAI style)", () => {
+      const messages = [
+        {
+          role: "user",
+          content: [
+            {
+              type: "file",
+              file: { file_id: "file-xyz" },
+              mimeType: "application/pdf",
+            },
+          ],
+        },
+      ];
+      const result = CompatSpecification.toGenAI({ messages, direction: "input" });
+      expect(result.messages[0]?.parts[0]).toEqual({
+        type: "file",
+        modality: "document",
+        file_id: "file-xyz",
+        mime_type: "application/pdf",
+      });
+    });
+
+    it("should handle document part with Anthropic base64 source", () => {
+      const messages = [
+        {
+          role: "user",
+          content: [
+            {
+              type: "document",
+              source: { type: "base64", media_type: "application/pdf", data: "pdfdata" },
+            },
+          ],
+        },
+      ];
+      const result = CompatSpecification.toGenAI({ messages, direction: "input" });
+      expect(result.messages[0]?.parts[0]).toEqual({
+        type: "blob",
+        modality: "document",
+        content: "pdfdata",
+        mime_type: "application/pdf",
       });
     });
   });
@@ -380,6 +604,38 @@ describe("CompatSpecification", () => {
         type: "tool_call_response",
         id: "call_123",
         response: '{"result": "success"}',
+      });
+    });
+
+    it("should handle tool response with toolId field", () => {
+      const messages = [
+        {
+          role: "tool",
+          content: [
+            {
+              type: "text",
+              text: '{"error":"Weather API rate limit exceeded. Please try again in 60 seconds.","isError":true}',
+            },
+          ],
+          toolId: "call_get_weather_002",
+          toolName: "get_weather",
+        },
+      ];
+      const result = CompatSpecification.toGenAI({ messages, direction: "input" });
+      expect(result.messages[0]?.role).toBe("tool");
+      expect(result.messages[0]?.parts[0]).toMatchObject({
+        type: "tool_call_response",
+        id: "call_get_weather_002",
+        _provider_metadata: { _known_fields: { toolName: "get_weather" } },
+      });
+    });
+
+    it("should handle tool response with tool_use_id field", () => {
+      const messages = [{ role: "tool", tool_use_id: "tu_456", content: "result" }];
+      const result = CompatSpecification.toGenAI({ messages, direction: "input" });
+      expect(result.messages[0]?.parts[0]).toMatchObject({
+        type: "tool_call_response",
+        id: "tu_456",
       });
     });
 

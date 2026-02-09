@@ -31,12 +31,11 @@ export const AnthropicSpecification = {
   systemSchema: AnthropicSystemSchema,
 
   toGenAI({ messages, system, direction }: ProviderToGenAIArgs) {
-    // Handle string input
+    // Handle string input - wrap in Anthropic format then fall through
+    // (avoids skipping system instruction handling below)
     if (typeof messages === "string") {
       const role = direction === "input" ? "user" : "assistant";
-      return {
-        messages: [{ role, parts: [{ type: "text" as const, content: messages }] }],
-      };
+      messages = [{ role, content: messages }];
     }
 
     // Validate with schema
