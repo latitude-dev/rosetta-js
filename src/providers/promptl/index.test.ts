@@ -189,6 +189,31 @@ describe("PromptlSpecification", () => {
           uri: "https://example.com/img.jpg",
         });
       });
+
+      it("should convert large Uint8Array image without stack overflow (1MB)", () => {
+        const size = 1_000_000;
+        const bytes = new Uint8Array(size);
+        for (let i = 0; i < size; i++) bytes[i] = i % 256;
+        const messages: PromptlMessage[] = [{ role: "user", content: [{ type: "image", image: bytes }] }];
+
+        const result = PromptlSpecification.toGenAI({ messages, direction: "input" });
+
+        expect(result.messages[0]?.parts[0]?.type).toBe("blob");
+        expect((result.messages[0]?.parts[0] as { modality: string }).modality).toBe("image");
+        expect((result.messages[0]?.parts[0] as { content: string }).content).toBeTruthy();
+      });
+
+      it("should convert large ArrayBuffer image without stack overflow (1MB)", () => {
+        const size = 1_000_000;
+        const bytes = new Uint8Array(size);
+        for (let i = 0; i < size; i++) bytes[i] = i % 256;
+        const messages: PromptlMessage[] = [{ role: "user", content: [{ type: "image", image: bytes.buffer }] }];
+
+        const result = PromptlSpecification.toGenAI({ messages, direction: "input" });
+
+        expect(result.messages[0]?.parts[0]?.type).toBe("blob");
+        expect((result.messages[0]?.parts[0] as { modality: string }).modality).toBe("image");
+      });
     });
 
     describe("file content", () => {
@@ -253,6 +278,35 @@ describe("PromptlSpecification", () => {
         const result = PromptlSpecification.toGenAI({ messages, direction: "input" });
 
         expect((result.messages[0]?.parts[0] as { modality: string }).modality).toBe("audio");
+      });
+
+      it("should convert large Uint8Array file without stack overflow (1MB)", () => {
+        const size = 1_000_000;
+        const bytes = new Uint8Array(size);
+        for (let i = 0; i < size; i++) bytes[i] = i % 256;
+        const messages: PromptlMessage[] = [
+          { role: "user", content: [{ type: "file", file: bytes, mimeType: "application/pdf" }] },
+        ];
+
+        const result = PromptlSpecification.toGenAI({ messages, direction: "input" });
+
+        expect(result.messages[0]?.parts[0]?.type).toBe("blob");
+        expect((result.messages[0]?.parts[0] as { modality: string }).modality).toBe("document");
+        expect((result.messages[0]?.parts[0] as { content: string }).content).toBeTruthy();
+      });
+
+      it("should convert large ArrayBuffer file without stack overflow (2MB)", () => {
+        const size = 2_000_000;
+        const bytes = new Uint8Array(size);
+        for (let i = 0; i < size; i++) bytes[i] = i % 256;
+        const messages: PromptlMessage[] = [
+          { role: "user", content: [{ type: "file", file: bytes.buffer, mimeType: "application/octet-stream" }] },
+        ];
+
+        const result = PromptlSpecification.toGenAI({ messages, direction: "input" });
+
+        expect(result.messages[0]?.parts[0]?.type).toBe("blob");
+        expect((result.messages[0]?.parts[0] as { content: string }).content).toBeTruthy();
       });
     });
 

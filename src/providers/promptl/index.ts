@@ -21,6 +21,7 @@ import {
 } from "$package/providers/provider";
 import {
   applyMetadataMode,
+  binaryToBase64,
   coerceToRecord,
   extractExtraFields,
   getKnownFields,
@@ -154,24 +155,12 @@ function promptlContentToGenAI(content: PromptlContent): GenAIPart[] {
           },
         ];
       }
-      if (imageValue instanceof ArrayBuffer) {
-        const base64 = btoa(String.fromCharCode(...new Uint8Array(imageValue)));
+      if (imageValue instanceof Uint8Array || imageValue instanceof ArrayBuffer) {
         return [
           {
             type: "blob",
             modality: "image",
-            content: base64,
-            ...(metadata ? { _provider_metadata: metadata } : {}),
-          },
-        ];
-      }
-      if (imageValue instanceof Uint8Array) {
-        const base64 = btoa(String.fromCharCode(...imageValue));
-        return [
-          {
-            type: "blob",
-            modality: "image",
-            content: base64,
+            content: binaryToBase64(imageValue),
             ...(metadata ? { _provider_metadata: metadata } : {}),
           },
         ];
@@ -218,26 +207,13 @@ function promptlContentToGenAI(content: PromptlContent): GenAIPart[] {
           },
         ];
       }
-      if (fileValue instanceof ArrayBuffer) {
-        const base64 = btoa(String.fromCharCode(...new Uint8Array(fileValue)));
+      if (fileValue instanceof Uint8Array || fileValue instanceof ArrayBuffer) {
         return [
           {
             type: "blob",
             modality,
             mime_type: mimeType,
-            content: base64,
-            ...(metadata ? { _provider_metadata: metadata } : {}),
-          },
-        ];
-      }
-      if (fileValue instanceof Uint8Array) {
-        const base64 = btoa(String.fromCharCode(...fileValue));
-        return [
-          {
-            type: "blob",
-            modality,
-            mime_type: mimeType,
-            content: base64,
+            content: binaryToBase64(fileValue),
             ...(metadata ? { _provider_metadata: metadata } : {}),
           },
         ];

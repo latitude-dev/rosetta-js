@@ -256,10 +256,16 @@ export function getUrlString(value: URL | string): string {
 
 /**
  * Converts binary data (Uint8Array or ArrayBuffer) to a base64 string.
+ * Processes in chunks to avoid stack overflow with large inputs.
  */
 export function binaryToBase64(data: Uint8Array | ArrayBuffer): string {
   const bytes = data instanceof ArrayBuffer ? new Uint8Array(data) : data;
-  return btoa(String.fromCharCode(...bytes));
+  const CHUNK_SIZE = 8192;
+  let binary = "";
+  for (let i = 0; i < bytes.length; i += CHUNK_SIZE) {
+    binary += String.fromCharCode(...bytes.subarray(i, i + CHUNK_SIZE));
+  }
+  return btoa(binary);
 }
 
 /**
