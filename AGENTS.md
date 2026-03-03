@@ -24,9 +24,8 @@ More providers will be added incrementally.
 ```mermaid
 flowchart TB
     subgraph api [src/api]
-        Translator[Translator Class]
-        translate[translate function]
-        safeTranslate[safeTranslate function]
+        translateFn[translate function]
+        safeTranslateFn[safeTranslate function]
     end
 
     subgraph core [src/core]
@@ -52,11 +51,10 @@ flowchart TB
         end
     end
 
-    translate --> Translator
-    safeTranslate --> Translator
-    Translator --> specifications
+    translateFn --> specifications
+    safeTranslateFn --> translateFn
+    translateFn --> inferIndex
     specifications --> providerFolders
-    Translator --> inferIndex
     inferIndex --> specifications
 ```
 
@@ -96,7 +94,7 @@ src/
 ├── index.ts                    # Re-exports from ./api only
 ├── api/
 │   ├── index.ts                # Public exports
-│   └── translator.ts           # Translator class, types, and functions
+│   └── translator.ts           # translate/safeTranslate functions and types
 ├── core/
 │   ├── index.ts                # Internal exports
 │   ├── genai/
@@ -138,7 +136,7 @@ examples/                       # E2E tests with real library integrations
 ### Main Exports
 
 ```typescript
-import { translate, safeTranslate, Translator, Provider } from "rosetta-ai";
+import { translate, safeTranslate, Provider } from "rosetta-ai";
 
 // Quick usage - auto-infer source if not provided
 const { messages, system } = translate(inputMessages);
@@ -164,30 +162,15 @@ if (result.error) {
   console.log("Translated:", result.messages);
 }
 
-// Custom translator with inference priority
-const translator = new Translator({
+// Custom inference priority
+const { messages } = translate(inputMessages, {
   inferPriority: [Provider.Promptl, Provider.GenAI],
 });
 
-// Custom translator that filters empty messages
-const filteringTranslator = new Translator({
+// Filter empty messages during translation
+const { messages } = translate(inputMessages, {
   filterEmptyMessages: true,
 });
-```
-
-### Translator Configuration
-
-The `Translator` class accepts configuration options:
-
-```typescript
-type TranslatorConfig = {
-  // Priority order for provider inference (default: DEFAULT_INFER_PRIORITY)
-  inferPriority?: Provider[];
-  
-  // Filter out empty messages during translation (default: false)
-  // When true, removes messages with no parts or only empty text parts
-  filterEmptyMessages?: boolean;
-};
 ```
 
 ### Provider Enum

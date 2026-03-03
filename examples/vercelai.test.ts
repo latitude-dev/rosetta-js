@@ -7,7 +7,7 @@
 
 import { openai } from "@ai-sdk/openai";
 import { generateText } from "ai";
-import { Provider, Translator, translate } from "rosetta-ai";
+import { Provider, translate } from "rosetta-ai";
 import { describe, expect, it } from "vitest";
 import { z } from "zod";
 
@@ -532,8 +532,6 @@ describe("VercelAI E2E", () => {
     const sourceMap = [{ start: 0, end: 10, identifier: "test" }];
 
     describe("passthrough mode", () => {
-      const translator = new Translator({ providerMetadata: "passthrough" });
-
       it("should preserve _promptlSourceMap on user message when translating Promptl to VercelAI", () => {
         const promptlMessages = [
           {
@@ -542,9 +540,10 @@ describe("VercelAI E2E", () => {
           },
         ];
 
-        const result = translator.translate(promptlMessages, {
+        const result = translate(promptlMessages, {
           from: Provider.Promptl,
           to: Provider.VercelAI,
+          providerMetadata: "passthrough",
         });
 
         // Content should be array to preserve part metadata
@@ -565,9 +564,10 @@ describe("VercelAI E2E", () => {
           },
         ];
 
-        const result = translator.translate(promptlMessages, {
+        const result = translate(promptlMessages, {
           from: Provider.Promptl,
           to: Provider.VercelAI,
+          providerMetadata: "passthrough",
         });
 
         // System message uses string content, no parts to apply metadata to
@@ -584,9 +584,10 @@ describe("VercelAI E2E", () => {
           },
         ];
 
-        const result = translator.translate(promptlMessages, {
+        const result = translate(promptlMessages, {
           from: Provider.Promptl,
           to: Provider.VercelAI,
+          providerMetadata: "passthrough",
         });
 
         // Content should be array to preserve part metadata
@@ -601,8 +602,6 @@ describe("VercelAI E2E", () => {
     });
 
     describe("preserve mode", () => {
-      const translator = new Translator({ providerMetadata: "preserve" });
-
       it("should preserve _promptlSourceMap in _providerMetadata on user message", () => {
         const promptlMessages = [
           {
@@ -611,9 +610,10 @@ describe("VercelAI E2E", () => {
           },
         ];
 
-        const result = translator.translate(promptlMessages, {
+        const result = translate(promptlMessages, {
           from: Provider.Promptl,
           to: Provider.VercelAI,
+          providerMetadata: "preserve",
         });
 
         // Content should be array to preserve part metadata
@@ -634,9 +634,10 @@ describe("VercelAI E2E", () => {
           },
         ];
 
-        const result = translator.translate(promptlMessages, {
+        const result = translate(promptlMessages, {
           from: Provider.Promptl,
           to: Provider.VercelAI,
+          providerMetadata: "preserve",
         });
 
         // System message uses string content, part metadata is stored in _partsMetadata
@@ -653,8 +654,6 @@ describe("VercelAI E2E", () => {
     const sourceMap = [{ start: 15, end: 25, identifier: "color" }];
 
     describe("passthrough mode", () => {
-      const translator = new Translator({ providerMetadata: "passthrough" });
-
       it("should preserve _promptlSourceMap through full round-trip for user message", () => {
         const originalPromptl = [
           {
@@ -664,9 +663,10 @@ describe("VercelAI E2E", () => {
         ];
 
         // Promptl -> VercelAI (passthrough)
-        const vercelAI = translator.translate(originalPromptl, {
+        const vercelAI = translate(originalPromptl, {
           from: Provider.Promptl,
           to: Provider.VercelAI,
+          providerMetadata: "passthrough",
         });
 
         // Verify metadata is on VercelAI message
@@ -674,9 +674,10 @@ describe("VercelAI E2E", () => {
         expect(vercelContent[0]?._promptlSourceMap).toEqual(sourceMap);
 
         // VercelAI -> Promptl (passthrough)
-        const backToPromptl = translator.translate(vercelAI.messages, {
+        const backToPromptl = translate(vercelAI.messages, {
           from: Provider.VercelAI,
           to: Provider.Promptl,
+          providerMetadata: "passthrough",
         });
 
         // Verify metadata survives full round-trip
@@ -696,18 +697,20 @@ describe("VercelAI E2E", () => {
         ];
 
         // Promptl -> VercelAI (passthrough)
-        const vercelAI = translator.translate(originalPromptl, {
+        const vercelAI = translate(originalPromptl, {
           from: Provider.Promptl,
           to: Provider.VercelAI,
+          providerMetadata: "passthrough",
         });
 
         // System uses string content, _partsMetadata is stripped in passthrough, so metadata is lost
         expect((vercelAI.messages[0] as { _promptlSourceMap?: unknown })._promptlSourceMap).toBeUndefined();
 
         // VercelAI -> Promptl (passthrough)
-        const backToPromptl = translator.translate(vercelAI.messages, {
+        const backToPromptl = translate(vercelAI.messages, {
           from: Provider.VercelAI,
           to: Provider.Promptl,
+          providerMetadata: "passthrough",
         });
 
         // Metadata was lost in the Promptl -> VercelAI step
@@ -733,15 +736,17 @@ describe("VercelAI E2E", () => {
         ];
 
         // Promptl -> VercelAI (passthrough)
-        const vercelAI = translator.translate(originalPromptl, {
+        const vercelAI = translate(originalPromptl, {
           from: Provider.Promptl,
           to: Provider.VercelAI,
+          providerMetadata: "passthrough",
         });
 
         // VercelAI -> Promptl (passthrough)
-        const backToPromptl = translator.translate(vercelAI.messages, {
+        const backToPromptl = translate(vercelAI.messages, {
           from: Provider.VercelAI,
           to: Provider.Promptl,
+          providerMetadata: "passthrough",
         });
 
         expect(backToPromptl.messages).toHaveLength(2);
@@ -757,8 +762,6 @@ describe("VercelAI E2E", () => {
     });
 
     describe("preserve mode", () => {
-      const translator = new Translator({ providerMetadata: "preserve" });
-
       it("should preserve _promptlSourceMap through full round-trip for user message", () => {
         const originalPromptl = [
           {
@@ -768,9 +771,10 @@ describe("VercelAI E2E", () => {
         ];
 
         // Promptl -> VercelAI (preserve)
-        const vercelAI = translator.translate(originalPromptl, {
+        const vercelAI = translate(originalPromptl, {
           from: Provider.Promptl,
           to: Provider.VercelAI,
+          providerMetadata: "preserve",
         });
 
         // Verify metadata is in _providerMetadata on VercelAI message
@@ -780,9 +784,10 @@ describe("VercelAI E2E", () => {
         expect(vercelContent[0]?._providerMetadata?._promptlSourceMap).toEqual(sourceMap);
 
         // VercelAI -> Promptl (preserve)
-        const backToPromptl = translator.translate(vercelAI.messages, {
+        const backToPromptl = translate(vercelAI.messages, {
           from: Provider.VercelAI,
           to: Provider.Promptl,
+          providerMetadata: "preserve",
         });
 
         // Verify metadata survives full round-trip (in _providerMetadata)
@@ -804,9 +809,10 @@ describe("VercelAI E2E", () => {
         ];
 
         // Promptl -> VercelAI (preserve)
-        const vercelAI = translator.translate(originalPromptl, {
+        const vercelAI = translate(originalPromptl, {
           from: Provider.Promptl,
           to: Provider.VercelAI,
+          providerMetadata: "preserve",
         });
 
         // System uses string content, part metadata is stored in _providerMetadata._partsMetadata
@@ -816,9 +822,10 @@ describe("VercelAI E2E", () => {
         ).toEqual(systemSourceMap);
 
         // VercelAI -> Promptl (preserve)
-        const backToPromptl = translator.translate(vercelAI.messages, {
+        const backToPromptl = translate(vercelAI.messages, {
           from: Provider.VercelAI,
           to: Provider.Promptl,
+          providerMetadata: "preserve",
         });
 
         // Metadata should be preserved at content level in _providerMetadata
@@ -834,8 +841,6 @@ describe("VercelAI E2E", () => {
     const sourceMap = [{ start: 30, end: 30, identifier: "mode" }];
 
     describe("passthrough mode", () => {
-      const translator = new Translator({ providerMetadata: "passthrough" });
-
       it("should lose _promptlSourceMap for system messages in passthrough mode (no parts to restore to)", () => {
         const originalPromptl = [
           {
@@ -845,9 +850,10 @@ describe("VercelAI E2E", () => {
         ];
 
         // Promptl -> VercelAI
-        const vercelAI = translator.translate(originalPromptl, {
+        const vercelAI = translate(originalPromptl, {
           from: Provider.Promptl,
           to: Provider.VercelAI,
+          providerMetadata: "passthrough",
         });
 
         // System message uses string content, _partsMetadata is stripped in passthrough mode
@@ -855,9 +861,10 @@ describe("VercelAI E2E", () => {
         expect((vercelAI.messages[0] as { _promptlSourceMap?: unknown })._promptlSourceMap).toBeUndefined();
 
         // VercelAI -> Promptl
-        const backToPromptl = translator.translate(vercelAI.messages, {
+        const backToPromptl = translate(vercelAI.messages, {
           from: Provider.VercelAI,
           to: Provider.Promptl,
+          providerMetadata: "passthrough",
         });
 
         // Metadata was lost in the Promptl -> VercelAI step
@@ -868,8 +875,6 @@ describe("VercelAI E2E", () => {
     });
 
     describe("preserve mode", () => {
-      const translator = new Translator({ providerMetadata: "preserve" });
-
       it("should restore _promptlSourceMap from _partsMetadata to first content part after round-trip", () => {
         const originalPromptl = [
           {
@@ -879,9 +884,10 @@ describe("VercelAI E2E", () => {
         ];
 
         // Promptl -> VercelAI
-        const vercelAI = translator.translate(originalPromptl, {
+        const vercelAI = translate(originalPromptl, {
           from: Provider.Promptl,
           to: Provider.VercelAI,
+          providerMetadata: "preserve",
         });
 
         // System message uses string content, so metadata is in _providerMetadata._partsMetadata at message level
@@ -892,9 +898,10 @@ describe("VercelAI E2E", () => {
         expect(msgMeta?._partsMetadata?._promptlSourceMap).toEqual(sourceMap);
 
         // VercelAI -> Promptl
-        const backToPromptl = translator.translate(vercelAI.messages, {
+        const backToPromptl = translate(vercelAI.messages, {
           from: Provider.VercelAI,
           to: Provider.Promptl,
+          providerMetadata: "preserve",
         });
 
         // Metadata should be restored to first content part inside _providerMetadata
@@ -918,17 +925,17 @@ describe("VercelAI E2E", () => {
       ];
 
       // Promptl -> VercelAI (preserve mode: stores metadata in _providerMetadata)
-      const preserveTranslator = new Translator({ providerMetadata: "preserve" });
-      const vercelAI = preserveTranslator.translate(originalPromptl, {
+      const vercelAI = translate(originalPromptl, {
         from: Provider.Promptl,
         to: Provider.VercelAI,
+        providerMetadata: "preserve",
       });
 
       // VercelAI -> Promptl (passthrough mode: spreads _providerMetadata back to entity level)
-      const passthroughTranslator = new Translator({ providerMetadata: "passthrough" });
-      const backToPromptl = passthroughTranslator.translate(vercelAI.messages, {
+      const backToPromptl = translate(vercelAI.messages, {
         from: Provider.VercelAI,
         to: Provider.Promptl,
+        providerMetadata: "passthrough",
       });
 
       // The final message should have metadata at the same level as the original
@@ -947,17 +954,17 @@ describe("VercelAI E2E", () => {
       ];
 
       // Promptl -> VercelAI (preserve)
-      const preserveTranslator = new Translator({ providerMetadata: "preserve" });
-      const vercelAI = preserveTranslator.translate(originalPromptl, {
+      const vercelAI = translate(originalPromptl, {
         from: Provider.Promptl,
         to: Provider.VercelAI,
+        providerMetadata: "preserve",
       });
 
       // VercelAI -> Promptl (passthrough)
-      const passthroughTranslator = new Translator({ providerMetadata: "passthrough" });
-      const backToPromptl = passthroughTranslator.translate(vercelAI.messages, {
+      const backToPromptl = translate(vercelAI.messages, {
         from: Provider.VercelAI,
         to: Provider.Promptl,
+        providerMetadata: "passthrough",
       });
 
       // The final message should have metadata at the same level as the original
@@ -977,18 +984,18 @@ describe("VercelAI E2E", () => {
 
       // Promptl -> VercelAI (preserve)
       // System messages use string content, so part metadata is stored in _partsMetadata
-      const preserveTranslator = new Translator({ providerMetadata: "preserve" });
-      const vercelAI = preserveTranslator.translate(originalPromptl, {
+      const vercelAI = translate(originalPromptl, {
         from: Provider.Promptl,
         to: Provider.VercelAI,
+        providerMetadata: "preserve",
       });
 
       // VercelAI -> Promptl (passthrough)
       // _partsMetadata is applied back to the first content part
-      const passthroughTranslator = new Translator({ providerMetadata: "passthrough" });
-      const backToPromptl = passthroughTranslator.translate(vercelAI.messages, {
+      const backToPromptl = translate(vercelAI.messages, {
         from: Provider.VercelAI,
         to: Provider.Promptl,
+        providerMetadata: "passthrough",
       });
 
       // The final message should have metadata restored to the content part
@@ -1018,17 +1025,17 @@ describe("VercelAI E2E", () => {
       ];
 
       // Promptl -> VercelAI (preserve)
-      const preserveTranslator = new Translator({ providerMetadata: "preserve" });
-      const vercelAI = preserveTranslator.translate(originalPromptl, {
+      const vercelAI = translate(originalPromptl, {
         from: Provider.Promptl,
         to: Provider.VercelAI,
+        providerMetadata: "preserve",
       });
 
       // VercelAI -> Promptl (passthrough)
-      const passthroughTranslator = new Translator({ providerMetadata: "passthrough" });
-      const backToPromptl = passthroughTranslator.translate(vercelAI.messages, {
+      const backToPromptl = translate(vercelAI.messages, {
         from: Provider.VercelAI,
         to: Provider.Promptl,
+        providerMetadata: "passthrough",
       });
 
       // All messages should have their metadata restored
@@ -1055,17 +1062,17 @@ describe("VercelAI E2E", () => {
       ];
 
       // Promptl -> VercelAI (preserve)
-      const preserveTranslator = new Translator({ providerMetadata: "preserve" });
-      const vercelAI = preserveTranslator.translate(originalPromptl, {
+      const vercelAI = translate(originalPromptl, {
         from: Provider.Promptl,
         to: Provider.VercelAI,
+        providerMetadata: "preserve",
       });
 
       // VercelAI -> Promptl (passthrough)
-      const passthroughTranslator = new Translator({ providerMetadata: "passthrough" });
-      const backToPromptl = passthroughTranslator.translate(vercelAI.messages, {
+      const backToPromptl = translate(vercelAI.messages, {
         from: Provider.VercelAI,
         to: Provider.Promptl,
+        providerMetadata: "passthrough",
       });
 
       // Both content-level and message-level metadata should be preserved

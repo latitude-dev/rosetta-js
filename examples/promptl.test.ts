@@ -6,7 +6,7 @@
  */
 
 import { Adapters, render } from "promptl-ai";
-import { type GenAIMessage, Provider, Translator, translate } from "rosetta-ai";
+import { type GenAIMessage, Provider, translate } from "rosetta-ai";
 import { describe, expect, it } from "vitest";
 
 describe("Promptl E2E", () => {
@@ -154,10 +154,10 @@ You specialize in {{ region }}.
       expect(genAIPart).toBeDefined();
 
       // Convert back to Promptl with passthrough to restore source maps as direct properties
-      const passthroughTranslator = new Translator({ providerMetadata: "passthrough" });
-      const backToPromptl = passthroughTranslator.translate(toGenAI.messages, {
+      const backToPromptl = translate(toGenAI.messages, {
         from: Provider.GenAI,
         to: Provider.Promptl,
+        providerMetadata: "passthrough",
       });
 
       // Verify source maps are restored in Promptl format
@@ -190,10 +190,10 @@ You specialize in {{ region }}.
         from: Provider.Promptl,
         to: Provider.GenAI,
       });
-      const passthroughTranslator = new Translator({ providerMetadata: "passthrough" });
-      const backToPromptl = passthroughTranslator.translate(toGenAI.messages, {
+      const backToPromptl = translate(toGenAI.messages, {
         from: Provider.GenAI,
         to: Provider.Promptl,
+        providerMetadata: "passthrough",
       });
 
       // Extract source maps from original and restored
@@ -259,10 +259,10 @@ You specialize in {{ region }}.
         from: Provider.Promptl,
         to: Provider.GenAI,
       });
-      const passthroughTranslator = new Translator({ providerMetadata: "passthrough" });
-      const backToPromptl = passthroughTranslator.translate(toGenAI.messages, {
+      const backToPromptl = translate(toGenAI.messages, {
         from: Provider.GenAI,
         to: Provider.Promptl,
+        providerMetadata: "passthrough",
       });
 
       // Verify structure is preserved
@@ -325,11 +325,11 @@ You are a {{ role }} assistant specializing in {{ domain }}.
       expect(systemPartWithMap).toBeDefined();
 
       // Translate back with system included (use passthrough to restore source maps as direct properties)
-      const passthroughTranslator = new Translator({ providerMetadata: "passthrough" });
-      const backToPromptl = passthroughTranslator.translate(toGenAI.messages, {
+      const backToPromptl = translate(toGenAI.messages, {
         from: Provider.GenAI,
         to: Provider.Promptl,
         system: toGenAI.system,
+        providerMetadata: "passthrough",
       });
 
       // Find the restored system message
@@ -1051,11 +1051,11 @@ You are a {{ role }} assistant specializing in {{ domain }}.
       expect(toGenAI.messages).toHaveLength(3);
 
       // Step 2: GenAI → Promptl (passthrough mode)
-      const passthroughTranslator = new Translator({ providerMetadata: "passthrough" });
-      const backToPromptl = passthroughTranslator.translate(toGenAI.messages, {
+      const backToPromptl = translate(toGenAI.messages, {
         from: Provider.GenAI,
         to: Provider.Promptl,
         system: toGenAI.system,
+        providerMetadata: "passthrough",
       });
 
       // Should have same number of messages with same roles in same order
@@ -1113,11 +1113,11 @@ You are a {{ role }} assistant specializing in {{ domain }}.
       expect(toGenAI.messages).toHaveLength(4);
 
       // Step 2: GenAI → Promptl (passthrough)
-      const passthroughTranslator = new Translator({ providerMetadata: "passthrough" });
-      const backToPromptl = passthroughTranslator.translate(toGenAI.messages, {
+      const backToPromptl = translate(toGenAI.messages, {
         from: Provider.GenAI,
         to: Provider.Promptl,
         system: toGenAI.system,
+        providerMetadata: "passthrough",
       });
 
       // Roles should match original order

@@ -9,8 +9,6 @@ export {
   safeTranslate,
   type TranslateOptions,
   type TranslateResult,
-  Translator,
-  type TranslatorConfig,
   translate,
 } from "$package/api/translator";
 export {

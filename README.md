@@ -93,6 +93,9 @@ const { messages, system } = translate(inputMessages, {
 | `to` | `Provider` | `Provider.GenAI` | Target provider format |
 | `system` | `string \| object \| object[]` | - | System instructions (for providers that separate them) |
 | `direction` | `"input" \| "output"` | `"input"` | Affects role interpretation when translating strings |
+| `inferPriority` | `Provider[]` | `DEFAULT_INFER_PRIORITY` | Priority order for provider auto-detection |
+| `filterEmptyMessages` | `boolean` | `false` | Remove empty messages (no parts, or only empty text) during translation |
+| `providerMetadata` | `"preserve" \| "passthrough" \| "strip"` | `"preserve"` | How to handle provider metadata (extra fields) in translation |
 
 **Returns:** `{ messages, system? }` - translated messages and optional system instructions
 
@@ -111,33 +114,6 @@ if (result.error) {
   // Use result.messages (properly typed)
 }
 ```
-
-### Translator Class
-
-For advanced configuration, create a `Translator` instance:
-
-```typescript
-import { Translator, Provider } from "rosetta-ai";
-
-const translator = new Translator({
-  // Custom priority order for provider auto-detection
-  inferPriority: [Provider.OpenAICompletions, Provider.Anthropic, Provider.GenAI],
-  
-  // Filter out empty messages during translation (default: false)
-  filterEmptyMessages: true,
-});
-
-const { messages } = translator.translate(inputMessages);
-const safeResult = translator.safeTranslate(inputMessages);
-```
-
-**Configuration Options:**
-
-| Option | Type | Default | Description |
-|--------|------|---------|-------------|
-| `inferPriority` | `Provider[]` | `DEFAULT_INFER_PRIORITY` | Priority order for provider auto-detection |
-| `filterEmptyMessages` | `boolean` | `false` | Remove empty messages (no parts, or only empty text) during translation |
-| `providerMetadata` | `"preserve" \| "passthrough" \| "strip"` | `"preserve"` | How to handle provider metadata (extra fields) in translation |
 
 ### Input Flexibility
 
@@ -395,17 +371,16 @@ The `providerMetadata` option controls how metadata (extra fields) is handled in
 | `"strip"` | Don't include metadata (only use `_known_fields` for translation) |
 
 ```typescript
+import { translate, Provider } from "rosetta-ai";
+
 // Preserve metadata (default) - keeps _provider_metadata in output
-const translator = new Translator(); // or { providerMetadata: "preserve" }
-translator.translate(messages, { from: Provider.Promptl, to: Provider.GenAI });
+translate(messages, { from: Provider.Promptl, to: Provider.GenAI });
 
 // Passthrough - spread extra fields on output entities for lossless round-trips
-const passthroughTranslator = new Translator({ providerMetadata: "passthrough" });
-passthroughTranslator.translate(messages, { from: Provider.GenAI, to: Provider.Promptl });
+translate(messages, { from: Provider.GenAI, to: Provider.Promptl, providerMetadata: "passthrough" });
 
 // Strip - clean output without metadata
-const stripTranslator = new Translator({ providerMetadata: "strip" });
-stripTranslator.translate(messages, { to: Provider.VercelAI });
+translate(messages, { to: Provider.VercelAI, providerMetadata: "strip" });
 ```
 
 **Note**: When translating between the same provider (e.g., GenAI → GenAI), `providerMetadata` is automatically set to `"passthrough"` to ensure lossless round-trips, regardless of the configured setting.

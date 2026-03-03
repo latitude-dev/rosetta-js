@@ -1,6 +1,6 @@
 {
   "name": "rosetta-ai",
-  "version": "1.6.3",
+  "version": "2.0.0",
   "author": "Latitude Data SL",
   "license": "MIT",
   "description": "The translation layer for LLM provider messages",
