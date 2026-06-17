@@ -610,6 +610,323 @@ describe("VercelAISpecification", () => {
         expect(result.messages[0]?.parts[1]?.type).toBe("uri");
       });
     });
+
+    describe("v7 file content (tagged FileData / ProviderReference)", () => {
+      it("should unwrap a tagged FileData 'data' variant to a blob", () => {
+        const messages: VercelAIMessage[] = [
+          {
+            role: "user",
+            content: [{ type: "file", data: { type: "data", data: "SGVsbG8=" }, mediaType: "text/plain" }],
+          },
+        ];
+
+        const result = VercelAISpecification.toGenAI({ messages, direction: "input" });
+
+        expect(result.messages[0]?.parts[0]).toEqual({
+          type: "blob",
+          modality: "document",
+          mime_type: "text/plain",
+          content: "SGVsbG8=",
+        });
+      });
+
+      it("should unwrap a tagged FileData 'url' variant to a uri", () => {
+        const messages: VercelAIMessage[] = [
+          {
+            role: "user",
+            content: [
+              {
+                type: "file",
+                data: { type: "url", url: new URL("https://example.com/doc.pdf") },
+                mediaType: "application/pdf",
+              },
+            ],
+          },
+        ];
+
+        const result = VercelAISpecification.toGenAI({ messages, direction: "input" });
+
+        expect(result.messages[0]?.parts[0]).toEqual({
+          type: "uri",
+          modality: "document",
+          mime_type: "application/pdf",
+          uri: "https://example.com/doc.pdf",
+        });
+      });
+
+      it("should map a tagged FileData 'reference' variant to a GenAI file part with metadata", () => {
+        const messages: VercelAIMessage[] = [
+          {
+            role: "user",
+            content: [
+              {
+                type: "file",
+                data: { type: "reference", reference: { openai: "file-abc" } },
+                mediaType: "application/pdf",
+              },
+            ],
+          },
+        ];
+
+        const result = VercelAISpecification.toGenAI({ messages, direction: "input" });
+
+        const part = result.messages[0]?.parts[0] as {
+          type: string;
+          file_id: string;
+          modality: string;
+          _provider_metadata?: { providerReference?: unknown; _known_fields?: { originalType?: string } };
+        };
+        expect(part.type).toBe("file");
+        expect(part.modality).toBe("document");
+        expect(part.file_id).toBe("file-abc");
+        expect(part._provider_metadata?.providerReference).toEqual({ openai: "file-abc" });
+        expect(part._provider_metadata?._known_fields?.originalType).toBe("file-reference");
+      });
+
+      it("should map a tagged FileData 'text' variant to a blob carrying the raw text", () => {
+        const messages: VercelAIMessage[] = [
+          {
+            role: "user",
+            content: [{ type: "file", data: { type: "text", text: "inline doc body" }, mediaType: "text/plain" }],
+          },
+        ];
+
+        const result = VercelAISpecification.toGenAI({ messages, direction: "input" });
+
+        const part = result.messages[0]?.parts[0] as {
+          type: string;
+          content: string;
+          _provider_metadata?: { _known_fields?: { originalType?: string } };
+        };
+        expect(part.type).toBe("blob");
+        expect(part.content).toBe("inline doc body");
+        expect(part._provider_metadata?._known_fields?.originalType).toBe("file-text");
+      });
+
+      it("should map a bare ProviderReference file data to a GenAI file part", () => {
+        const messages: VercelAIMessage[] = [
+          {
+            role: "user",
+            content: [{ type: "file", data: { anthropic: "file_xyz" }, mediaType: "application/pdf" }],
+          },
+        ];
+
+        const result = VercelAISpecification.toGenAI({ messages, direction: "input" });
+
+        const part = result.messages[0]?.parts[0] as { type: string; file_id: string };
+        expect(part.type).toBe("file");
+        expect(part.file_id).toBe("file_xyz");
+      });
+
+      it("should infer image modality from a bare 'image' mediaType segment (v7)", () => {
+        const messages: VercelAIMessage[] = [
+          { role: "user", content: [{ type: "file", data: "abc", mediaType: "image" }] },
+        ];
+
+        const result = VercelAISpecification.toGenAI({ messages, direction: "input" });
+
+        expect((result.messages[0]?.parts[0] as { modality: string }).modality).toBe("image");
+      });
+    });
+
+    describe("v7 image content (ProviderReference)", () => {
+      it("should map an image with a ProviderReference to a GenAI file part (image modality)", () => {
+        const messages: VercelAIMessage[] = [
+          { role: "user", content: [{ type: "image", image: { openai: "file-img-1" }, mediaType: "image/png" }] },
+        ];
+
+        const result = VercelAISpecification.toGenAI({ messages, direction: "input" });
+
+        const part = result.messages[0]?.parts[0] as {
+          type: string;
+          modality: string;
+          file_id: string;
+          _provider_metadata?: { providerReference?: unknown; _known_fields?: { originalType?: string } };
+        };
+        expect(part.type).toBe("file");
+        expect(part.modality).toBe("image");
+        expect(part.file_id).toBe("file-img-1");
+        expect(part._provider_metadata?.providerReference).toEqual({ openai: "file-img-1" });
+        expect(part._provider_metadata?._known_fields?.originalType).toBe("file-reference");
+      });
+    });
+
+    describe("v7 custom content (assistant)", () => {
+      it("should map a custom part to a GenAI generic part preserving kind", () => {
+        const messages: VercelAIMessage[] = [{ role: "assistant", content: [{ type: "custom", kind: "acme.widget" }] }];
+
+        const result = VercelAISpecification.toGenAI({ messages, direction: "output" });
+
+        const part = result.messages[0]?.parts[0] as {
+          type: string;
+          kind?: string;
+          _provider_metadata?: { _known_fields?: { originalType?: string } };
+        };
+        expect(part.type).toBe("custom");
+        expect(part.kind).toBe("acme.widget");
+        expect(part._provider_metadata?._known_fields?.originalType).toBe("custom");
+      });
+    });
+
+    describe("v7 reasoning-file content (assistant)", () => {
+      it("should map a reasoning-file 'data' variant to a blob with originalType reasoning-file", () => {
+        const messages: VercelAIMessage[] = [
+          {
+            role: "assistant",
+            content: [{ type: "reasoning-file", data: { type: "data", data: "cmVhc29u" }, mediaType: "text/plain" }],
+          },
+        ];
+
+        const result = VercelAISpecification.toGenAI({ messages, direction: "output" });
+
+        const part = result.messages[0]?.parts[0] as {
+          type: string;
+          content: string;
+          _provider_metadata?: { _known_fields?: { originalType?: string } };
+        };
+        expect(part.type).toBe("blob");
+        expect(part.content).toBe("cmVhc29u");
+        expect(part._provider_metadata?._known_fields?.originalType).toBe("reasoning-file");
+      });
+
+      it("should map a reasoning-file 'url' variant to a uri with originalType reasoning-file", () => {
+        const messages: VercelAIMessage[] = [
+          {
+            role: "assistant",
+            content: [
+              {
+                type: "reasoning-file",
+                data: { type: "url", url: new URL("https://example.com/r.bin") },
+                mediaType: "application/octet-stream",
+              },
+            ],
+          },
+        ];
+
+        const result = VercelAISpecification.toGenAI({ messages, direction: "output" });
+
+        const part = result.messages[0]?.parts[0] as {
+          type: string;
+          uri: string;
+          _provider_metadata?: { _known_fields?: { originalType?: string } };
+        };
+        expect(part.type).toBe("uri");
+        expect(part.uri).toBe("https://example.com/r.bin");
+        expect(part._provider_metadata?._known_fields?.originalType).toBe("reasoning-file");
+      });
+    });
+
+    describe("v7 tool-result content members", () => {
+      it("should accept and pass through a 'file' tool-result content member", () => {
+        const messages: VercelAIMessage[] = [
+          {
+            role: "tool",
+            content: [
+              {
+                type: "tool-result",
+                toolCallId: "call-1",
+                toolName: "make_file",
+                output: {
+                  type: "content",
+                  value: [{ type: "file", data: { type: "data", data: "Zm9v" }, mediaType: "text/plain" }],
+                },
+              },
+            ],
+          },
+        ];
+
+        const result = VercelAISpecification.toGenAI({ messages, direction: "input" });
+
+        expect(result.messages[0]?.parts[0]?.type).toBe("tool_call_response");
+        const response = (result.messages[0]?.parts[0] as { response: Array<{ type: string }> }).response;
+        expect(response[0]?.type).toBe("file");
+      });
+
+      it("should accept 'file-reference' and 'image-file-reference' tool-result content members", () => {
+        const messages: VercelAIMessage[] = [
+          {
+            role: "tool",
+            content: [
+              {
+                type: "tool-result",
+                toolCallId: "call-2",
+                toolName: "lookup",
+                output: {
+                  type: "content",
+                  value: [
+                    { type: "file-reference", providerReference: { openai: "file-a" } },
+                    { type: "image-file-reference", providerReference: { openai: "file-b" } },
+                  ],
+                },
+              },
+            ],
+          },
+        ];
+
+        const result = VercelAISpecification.toGenAI({ messages, direction: "input" });
+
+        const response = (result.messages[0]?.parts[0] as { response: Array<{ type: string }> }).response;
+        expect(response[0]?.type).toBe("file-reference");
+        expect(response[1]?.type).toBe("image-file-reference");
+      });
+    });
+
+    describe("separated system field", () => {
+      it("should prepend a string system instruction as a system message", () => {
+        const result = VercelAISpecification.toGenAI({
+          messages: [{ role: "user", content: "Hello" }],
+          system: "You are helpful.",
+          direction: "input",
+        });
+
+        expect(result.messages[0]?.role).toBe("system");
+        expect(result.messages[0]?.parts[0]).toEqual({ type: "text", content: "You are helpful." });
+        expect(result.messages[1]?.role).toBe("user");
+      });
+
+      it("should accept a single SystemModelMessage object", () => {
+        const result = VercelAISpecification.toGenAI({
+          messages: [{ role: "user", content: "Hello" }],
+          system: { role: "system", content: "Be concise." },
+          direction: "input",
+        });
+
+        expect(result.messages[0]?.role).toBe("system");
+        expect(result.messages[0]?.parts[0]).toEqual({ type: "text", content: "Be concise." });
+      });
+
+      it("should accept an array of SystemModelMessage objects in order", () => {
+        const result = VercelAISpecification.toGenAI({
+          messages: [{ role: "user", content: "Hello" }],
+          system: [
+            { role: "system", content: "First." },
+            { role: "system", content: "Second." },
+          ],
+          direction: "input",
+        });
+
+        expect(result.messages[0]?.parts[0]).toEqual({ type: "text", content: "First." });
+        expect(result.messages[1]?.parts[0]).toEqual({ type: "text", content: "Second." });
+        expect(result.messages[2]?.role).toBe("user");
+      });
+
+      it("should prepend the separated system before inline system messages (both)", () => {
+        const result = VercelAISpecification.toGenAI({
+          messages: [
+            { role: "system", content: "Inline system." },
+            { role: "user", content: "Hello" },
+          ],
+          system: "Separated system.",
+          direction: "input",
+        });
+
+        // Separated system is prepended; inline system keeps its position.
+        expect(result.messages).toHaveLength(3);
+        expect(result.messages[0]?.parts[0]).toEqual({ type: "text", content: "Separated system." });
+        expect(result.messages[1]?.parts[0]).toEqual({ type: "text", content: "Inline system." });
+        expect(result.messages[2]?.role).toBe("user");
+      });
+    });
   });
 
   describe("fromGenAI", () => {
@@ -1670,6 +1987,84 @@ describe("VercelAISpecification", () => {
         });
       });
     });
+
+    describe("v7 part degradation on v6 emit", () => {
+      it("should drop a v7 custom part (originalType custom) when emitting v6", () => {
+        const messages: GenAIMessage[] = [
+          {
+            role: "assistant",
+            parts: [
+              { type: "text", content: "Hello" },
+              {
+                type: "custom",
+                content: "",
+                kind: "acme.widget",
+                _provider_metadata: { _known_fields: { originalType: "custom" } },
+              },
+            ],
+          },
+        ];
+
+        const result = VercelAISpecification.fromGenAI({ messages, direction: "output", providerMetadata: "strip" });
+
+        // custom dropped; the single remaining text part collapses to a string.
+        expect(result.messages[0]?.content).toBe("Hello");
+      });
+
+      it("should produce an empty assistant message when the only part is a v7 custom part", () => {
+        const messages: GenAIMessage[] = [
+          {
+            role: "assistant",
+            parts: [
+              {
+                type: "custom",
+                content: "",
+                kind: "acme.widget",
+                _provider_metadata: { _known_fields: { originalType: "custom" } },
+              },
+            ],
+          },
+        ];
+
+        const result = VercelAISpecification.fromGenAI({ messages, direction: "output", providerMetadata: "strip" });
+
+        const content = result.messages[0]?.content as Array<unknown>;
+        expect(content).toHaveLength(0);
+      });
+
+      it("should emit a reasoning-file blob as a v6 file part, retaining originalType", () => {
+        const messages: GenAIMessage[] = [
+          {
+            role: "assistant",
+            parts: [
+              {
+                type: "blob",
+                modality: "document",
+                mime_type: "application/octet-stream",
+                content: "cmVhc29u",
+                _provider_metadata: { _known_fields: { originalType: "reasoning-file" } },
+              },
+            ],
+          },
+        ];
+
+        const result = VercelAISpecification.fromGenAI({
+          messages,
+          direction: "output",
+          providerMetadata: "preserve",
+        });
+
+        const content = result.messages[0]?.content as Array<{
+          type: string;
+          data: string;
+          _providerMetadata?: { _knownFields?: { originalType?: string } };
+        }>;
+        expect(content[0]?.type).toBe("file");
+        expect(content[0]?.data).toBe("cmVhc29u");
+        // originalType is retained in metadata for potential round-trips
+        expect(content[0]?._providerMetadata?._knownFields?.originalType).toBe("reasoning-file");
+      });
+    });
   });
 
   describe("round-trip conversion", () => {
@@ -2047,6 +2442,74 @@ describe("VercelAISpecification", () => {
         const content = (result.data as { content: Array<{ unknown_field?: string }> }).content;
         expect(content[0]?.unknown_field).toBe("test");
       }
+    });
+
+    it("should validate and preserve unknown fields on a v7 custom part", () => {
+      const message = {
+        role: "assistant" as const,
+        content: [{ type: "custom" as const, kind: "acme.widget", future_field: 1 }],
+      };
+
+      const result = VercelAISpecification.messageSchema.safeParse(message);
+      expect(result.success).toBe(true);
+      if (result.success) {
+        const content = (result.data as { content: Array<{ future_field?: number }> }).content;
+        expect(content[0]?.future_field).toBe(1);
+      }
+    });
+
+    it("should validate a v7 reasoning-file part with tagged FileData", () => {
+      const message = {
+        role: "assistant" as const,
+        content: [
+          { type: "reasoning-file" as const, data: { type: "data" as const, data: "abc" }, mediaType: "text/plain" },
+        ],
+      };
+
+      const result = VercelAISpecification.messageSchema.safeParse(message);
+      expect(result.success).toBe(true);
+    });
+
+    it("should validate a v7 file part with each tagged FileData variant", () => {
+      const dataVariant = VercelAISpecification.messageSchema.safeParse({
+        role: "user",
+        content: [{ type: "file", data: { type: "data", data: "abc" }, mediaType: "text/plain" }],
+      });
+      const urlVariant = VercelAISpecification.messageSchema.safeParse({
+        role: "user",
+        content: [{ type: "file", data: { type: "url", url: new URL("https://e.com/x") }, mediaType: "text/plain" }],
+      });
+      const refVariant = VercelAISpecification.messageSchema.safeParse({
+        role: "user",
+        content: [{ type: "file", data: { type: "reference", reference: { openai: "f-1" } }, mediaType: "text/plain" }],
+      });
+      const textVariant = VercelAISpecification.messageSchema.safeParse({
+        role: "user",
+        content: [{ type: "file", data: { type: "text", text: "body" }, mediaType: "text/plain" }],
+      });
+
+      expect(dataVariant.success).toBe(true);
+      expect(urlVariant.success).toBe(true);
+      expect(refVariant.success).toBe(true);
+      expect(textVariant.success).toBe(true);
+    });
+
+    it("should validate a v7 image part with a ProviderReference", () => {
+      const result = VercelAISpecification.messageSchema.safeParse({
+        role: "user",
+        content: [{ type: "image", image: { openai: "file-img" }, mediaType: "image/png" }],
+      });
+      expect(result.success).toBe(true);
+    });
+
+    it("should validate the separated system field schema variants", () => {
+      const asString = VercelAISpecification.systemSchema?.safeParse("be nice");
+      const asObject = VercelAISpecification.systemSchema?.safeParse({ role: "system", content: "be nice" });
+      const asArray = VercelAISpecification.systemSchema?.safeParse([{ role: "system", content: "be nice" }]);
+
+      expect(asString?.success).toBe(true);
+      expect(asObject?.success).toBe(true);
+      expect(asArray?.success).toBe(true);
     });
   });
 

@@ -21,6 +21,17 @@ const DataContentSchema = z.union([
   }),
 ]);
 
+/** Provider-managed file reference (v7), e.g. `{ openai: "file-abc" }`. */
+const ProviderReferenceSchema = z.record(z.string(), z.string());
+
+/** Tagged file data (v7), used by file and reasoning-file parts. */
+const FileDataSchema = z.discriminatedUnion("type", [
+  z.object({ type: z.literal("data"), data: DataContentSchema }).passthrough(),
+  z.object({ type: z.literal("url"), url: z.instanceof(URL) }).passthrough(),
+  z.object({ type: z.literal("reference"), reference: ProviderReferenceSchema }).passthrough(),
+  z.object({ type: z.literal("text"), text: z.string() }).passthrough(),
+]);
+
 /** Text content part. */
 export const VercelAITextPartSchema = z
   .object({
@@ -30,21 +41,25 @@ export const VercelAITextPartSchema = z
   .passthrough();
 export type VercelAITextPart = Infer<typeof VercelAITextPartSchema>;
 
-/** Image content part. */
+/** Image content part. v7 also accepts a bare {@link ProviderReferenceSchema}. */
 export const VercelAIImagePartSchema = z
   .object({
     type: z.literal("image"),
-    image: DataContentSchema,
+    image: z.union([DataContentSchema, ProviderReferenceSchema]),
     mediaType: z.string().optional(),
   })
   .passthrough();
 export type VercelAIImagePart = Infer<typeof VercelAIImagePartSchema>;
 
-/** File content part. */
+/**
+ * File content part. v7 widened `data` to also accept a tagged {@link FileDataSchema}
+ * or a bare {@link ProviderReferenceSchema}. Tagged data must be tried first: a tagged
+ * `{ type: "data"|"text", ... }` also matches the `Record<string, string>` reference.
+ */
 export const VercelAIFilePartSchema = z
   .object({
     type: z.literal("file"),
-    data: DataContentSchema,
+    data: z.union([FileDataSchema, DataContentSchema, ProviderReferenceSchema]),
     filename: z.string().optional(),
     mediaType: z.string(),
   })
@@ -59,6 +74,16 @@ export const VercelAIReasoningPartSchema = z
   })
   .passthrough();
 export type VercelAIReasoningPart = Infer<typeof VercelAIReasoningPartSchema>;
+
+/** Reasoning file content part (v7, assistant only): a file part carrying reasoning data. */
+export const VercelAIReasoningFilePartSchema = z
+  .object({
+    type: z.literal("reasoning-file"),
+    data: z.union([FileDataSchema, DataContentSchema]),
+    mediaType: z.string(),
+  })
+  .passthrough();
+export type VercelAIReasoningFilePart = Infer<typeof VercelAIReasoningFilePartSchema>;
 
 /** Tool call content part. */
 export const VercelAIToolCallPartSchema = z
@@ -136,6 +161,17 @@ export const VercelAIToolResultOutputContentSchema = z
         z
           .object({ type: z.literal("image-file-id"), fileId: z.union([z.string(), z.record(z.string(), z.string())]) })
           .passthrough(),
+        // v7 additions:
+        z
+          .object({
+            type: z.literal("file"),
+            data: FileDataSchema,
+            mediaType: z.string(),
+            filename: z.string().optional(),
+          })
+          .passthrough(),
+        z.object({ type: z.literal("file-reference"), providerReference: ProviderReferenceSchema }).passthrough(),
+        z.object({ type: z.literal("image-file-reference"), providerReference: ProviderReferenceSchema }).passthrough(),
         z.object({ type: z.literal("custom") }).passthrough(),
       ]),
     ),
@@ -198,6 +234,15 @@ export const VercelAIToolApprovalResponseSchema = z
   .passthrough();
 export type VercelAIToolApprovalResponse = Infer<typeof VercelAIToolApprovalResponseSchema>;
 
+/** Custom content part (v7, assistant only). No v6 equivalent; dropped on v6 emit. */
+export const VercelAICustomPartSchema = z
+  .object({
+    type: z.literal("custom"),
+    kind: z.string(),
+  })
+  .passthrough();
+export type VercelAICustomPart = Infer<typeof VercelAICustomPartSchema>;
+
 /** User content - string or array of text/image/file parts. */
 export const VercelAIUserContentSchema = z.union([
   z.string(),
@@ -213,9 +258,11 @@ export const VercelAIAssistantContentSchema = z.union([
       VercelAITextPartSchema,
       VercelAIFilePartSchema,
       VercelAIReasoningPartSchema,
+      VercelAIReasoningFilePartSchema,
       VercelAIToolCallPartSchema,
       VercelAIToolResultPartSchema,
       VercelAIToolApprovalRequestSchema,
+      VercelAICustomPartSchema,
     ]),
   ),
 ]);
@@ -278,7 +325,17 @@ export type VercelAIPart =
   | VercelAIImagePart
   | VercelAIFilePart
   | VercelAIReasoningPart
+  | VercelAIReasoningFilePart
   | VercelAIToolCallPart
   | VercelAIToolResultPart
   | VercelAIToolApprovalRequest
-  | VercelAIToolApprovalResponse;
+  | VercelAIToolApprovalResponse
+  | VercelAICustomPart;
+
+/** Separated system instructions, mirroring v7's `instructions` shape. Emitted inline. */
+export const VercelAISystemSchema = z.union([
+  z.string(),
+  VercelAISystemMessageSchema,
+  z.array(VercelAISystemMessageSchema),
+]);
+export type VercelAISystem = Infer<typeof VercelAISystemSchema>;

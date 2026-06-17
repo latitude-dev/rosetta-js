@@ -14,7 +14,7 @@ import type { GoogleContent, GoogleSystem } from "$package/providers/google/sche
 import type { OpenAICompletionsMessage } from "$package/providers/openai/completions/schema";
 import type { OpenAIResponsesItem } from "$package/providers/openai/responses/schema";
 import type { PromptlMessage } from "$package/providers/promptl/schema";
-import type { VercelAIMessage } from "$package/providers/vercelai/schema";
+import type { VercelAIMessage, VercelAISystem } from "$package/providers/vercelai/schema";
 import type { ProviderMetadataMode } from "$package/utils";
 
 /** Enum of all supported providers. */
@@ -57,7 +57,7 @@ export type ProviderSystem<P extends Provider> =
   P extends Provider.OpenAIResponses ? never :
   P extends Provider.Anthropic ? AnthropicSystem :
   P extends Provider.Google ? GoogleSystem :
-  P extends Provider.VercelAI ? never :
+  P extends Provider.VercelAI ? VercelAISystem :
   P extends Provider.Compat ? CompatSystem :
   never;
 

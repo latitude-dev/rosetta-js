@@ -269,14 +269,15 @@ export function binaryToBase64(data: Uint8Array | ArrayBuffer): string {
 }
 
 /**
- * Infers modality from a MIME type string.
- * Returns the modality category: image, video, audio, or document (default for text and unknown types).
+ * Infers modality from a MIME type string: image, video, audio, or document (default).
+ * Accepts full IANA types (`image/png`), wildcards (`image/*`), and bare segments (`image`).
  */
 export function inferModality(mimeType: string | undefined): string {
   if (!mimeType) return "document";
-  if (mimeType.startsWith("image/")) return "image";
-  if (mimeType.startsWith("video/")) return "video";
-  if (mimeType.startsWith("audio/")) return "audio";
+  const top = mimeType.split("/")[0];
+  if (top === "image") return "image";
+  if (top === "video") return "video";
+  if (top === "audio") return "audio";
   return "document";
 }
 
