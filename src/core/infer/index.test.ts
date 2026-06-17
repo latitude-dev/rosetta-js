@@ -282,6 +282,18 @@ describe("inferProvider", () => {
     });
   });
 
+  describe("single message object", () => {
+    it("should infer the provider from a single message object", () => {
+      const message = { role: "user", parts: [{ type: "text", content: "Hello" }] };
+      expect(inferProvider(message)).toBe(Provider.GenAI);
+    });
+
+    it("should fall back to Compat for a single arbitrary message object", () => {
+      const message = { foo: "bar", baz: 123 };
+      expect(inferProvider(message)).toBe(Provider.Compat);
+    });
+  });
+
   describe("system-only inference", () => {
     it("should return first priority for string system with empty messages", () => {
       expect(inferProvider([], "You are helpful")).toBe(Provider.OpenAICompletions);

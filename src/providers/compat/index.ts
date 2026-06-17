@@ -51,6 +51,8 @@ export const CompatSpecification = {
     if (typeof messages === "string") {
       const role = direction === "input" ? "user" : "assistant";
       messages = [{ role, content: messages }];
+    } else if (!Array.isArray(messages)) {
+      messages = [messages];
     }
 
     // Validate with permissive schema

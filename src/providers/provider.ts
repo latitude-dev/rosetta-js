@@ -64,7 +64,7 @@ export type ProviderSystem<P extends Provider> =
 /**
  * Arguments for converting provider messages TO GenAI format.
  *
- * @property messages - The input messages to convert (string or array of provider messages).
+ * @property messages - The input messages to convert (string, a single, or an array of provider messages).
  * @property system - Optional separated system instructions (string, single object, or array of parts).
  * @property direction - Whether the translation is for "input" (user → assistant) or "output" (assistant → user).
  */

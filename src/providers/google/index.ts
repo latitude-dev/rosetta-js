@@ -36,6 +36,8 @@ export const GoogleSpecification = {
     if (typeof messages === "string") {
       const role = direction === "input" ? "user" : "model";
       messages = [{ role, parts: [{ text: messages }] }];
+    } else if (!Array.isArray(messages)) {
+      messages = [messages];
     }
 
     // Validate with schema
