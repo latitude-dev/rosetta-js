@@ -19,6 +19,15 @@ export const AnthropicTextBlockSchema = z
   .passthrough();
 export type AnthropicTextBlock = Infer<typeof AnthropicTextBlockSchema>;
 
+/** Mid-conversation system block (`mid_conv_system`): inline system instructions wrapping text blocks. */
+export const AnthropicMidConvSystemBlockSchema = z
+  .object({
+    type: z.literal("mid_conv_system"),
+    content: z.array(AnthropicTextBlockSchema),
+  })
+  .passthrough();
+export type AnthropicMidConvSystemBlock = Infer<typeof AnthropicMidConvSystemBlockSchema>;
+
 /** Thinking content block (extended thinking feature) */
 export const AnthropicThinkingBlockSchema = z
   .object({
@@ -161,6 +170,67 @@ export const AnthropicWebSearchToolResultBlockSchema = z
   .passthrough();
 export type AnthropicWebSearchToolResultBlock = Infer<typeof AnthropicWebSearchToolResultBlockSchema>;
 
+/** Web fetch tool result block */
+export const AnthropicWebFetchToolResultBlockSchema = z
+  .object({
+    type: z.literal("web_fetch_tool_result"),
+    tool_use_id: z.string(),
+    content: z.unknown(),
+  })
+  .passthrough();
+export type AnthropicWebFetchToolResultBlock = Infer<typeof AnthropicWebFetchToolResultBlockSchema>;
+
+/** Code execution tool result block */
+export const AnthropicCodeExecutionToolResultBlockSchema = z
+  .object({
+    type: z.literal("code_execution_tool_result"),
+    tool_use_id: z.string(),
+    content: z.unknown(),
+  })
+  .passthrough();
+export type AnthropicCodeExecutionToolResultBlock = Infer<typeof AnthropicCodeExecutionToolResultBlockSchema>;
+
+/** Bash code execution tool result block */
+export const AnthropicBashCodeExecutionToolResultBlockSchema = z
+  .object({
+    type: z.literal("bash_code_execution_tool_result"),
+    tool_use_id: z.string(),
+    content: z.unknown(),
+  })
+  .passthrough();
+export type AnthropicBashCodeExecutionToolResultBlock = Infer<typeof AnthropicBashCodeExecutionToolResultBlockSchema>;
+
+/** Text editor code execution tool result block */
+export const AnthropicTextEditorCodeExecutionToolResultBlockSchema = z
+  .object({
+    type: z.literal("text_editor_code_execution_tool_result"),
+    tool_use_id: z.string(),
+    content: z.unknown(),
+  })
+  .passthrough();
+export type AnthropicTextEditorCodeExecutionToolResultBlock = Infer<
+  typeof AnthropicTextEditorCodeExecutionToolResultBlockSchema
+>;
+
+/** Tool search tool result block */
+export const AnthropicToolSearchToolResultBlockSchema = z
+  .object({
+    type: z.literal("tool_search_tool_result"),
+    tool_use_id: z.string(),
+    content: z.unknown(),
+  })
+  .passthrough();
+export type AnthropicToolSearchToolResultBlock = Infer<typeof AnthropicToolSearchToolResultBlockSchema>;
+
+/** Container upload block (references a file uploaded to the container). */
+export const AnthropicContainerUploadBlockSchema = z
+  .object({
+    type: z.literal("container_upload"),
+    file_id: z.string(),
+  })
+  .passthrough();
+export type AnthropicContainerUploadBlock = Infer<typeof AnthropicContainerUploadBlockSchema>;
+
 /** Search result block (for RAG/search results) */
 export const AnthropicSearchResultBlockSchema = z
   .object({
@@ -172,12 +242,22 @@ export const AnthropicSearchResultBlockSchema = z
   .passthrough();
 export type AnthropicSearchResultBlock = Infer<typeof AnthropicSearchResultBlockSchema>;
 
+/** Generic block: catch-all for content block types not modeled above (e.g. newer tool-result blocks). */
+export const AnthropicGenericBlockSchema = z
+  .object({
+    type: z.string(),
+  })
+  .passthrough();
+export type AnthropicGenericBlock = Infer<typeof AnthropicGenericBlockSchema>;
+
 /**
  * Unified content block schema - handles all content types from both input and output.
  * Input-only types (image, document, tool_result) and output-only types are all included.
+ * The generic block is last so specific types match first and newer/unmodeled blocks pass through.
  */
 export const AnthropicContentBlockSchema = z.union([
   AnthropicTextBlockSchema,
+  AnthropicMidConvSystemBlockSchema,
   AnthropicImageBlockSchema,
   AnthropicDocumentBlockSchema,
   AnthropicThinkingBlockSchema,
@@ -186,21 +266,29 @@ export const AnthropicContentBlockSchema = z.union([
   AnthropicToolResultBlockSchema,
   AnthropicServerToolUseBlockSchema,
   AnthropicWebSearchToolResultBlockSchema,
+  AnthropicWebFetchToolResultBlockSchema,
+  AnthropicCodeExecutionToolResultBlockSchema,
+  AnthropicBashCodeExecutionToolResultBlockSchema,
+  AnthropicTextEditorCodeExecutionToolResultBlockSchema,
+  AnthropicToolSearchToolResultBlockSchema,
+  AnthropicContainerUploadBlockSchema,
   AnthropicSearchResultBlockSchema,
+  AnthropicGenericBlockSchema,
 ]);
 export type AnthropicContentBlock = Infer<typeof AnthropicContentBlockSchema>;
 
 /**
  * Unified message schema - handles both input (MessageParam) and output (Message) formats.
  *
- * Input format: { role: 'user' | 'assistant', content: string | ContentBlock[] }
+ * Input format: { role: 'user' | 'assistant' | 'system', content: string | ContentBlock[] }
  * Output format: { id, type: 'message', role: 'assistant', content: ContentBlock[], model, stop_reason, ... }
  *
  * The schema accepts both by making output-specific fields optional.
+ * The `system` role covers inline mid-conversation system messages.
  */
 export const AnthropicMessageSchema = z
   .object({
-    role: z.enum(["user", "assistant"]),
+    role: z.enum(["user", "assistant", "system"]),
     content: z.union([z.string(), z.array(AnthropicContentBlockSchema).min(1)]),
     // Output-specific fields (optional for input messages)
     id: z.string().optional(),

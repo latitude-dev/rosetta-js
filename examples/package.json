@@ -9,7 +9,7 @@
   },
   "dependencies": {
     "@ai-sdk/openai": "^3.0.21",
-    "@anthropic-ai/sdk": "^0.71.2",
+    "@anthropic-ai/sdk": "^0.104.2",
     "@google/genai": "^1.38.0",
     "ai": "^6.0.57",
     "openai": "^4.0.0",

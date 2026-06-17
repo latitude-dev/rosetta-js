@@ -1,6 +1,6 @@
 {
   "name": "rosetta-ai",
-  "version": "2.0.0",
+  "version": "2.1.0",
   "author": "Latitude Data SL",
   "license": "MIT",
   "description": "The translation layer for LLM provider messages",
@@ -29,7 +29,9 @@
     "build": "rollup -c rollup.config.ts --configPlugin @rollup/plugin-typescript={\"sourceMap\":false}",
     "dev": "rollup -c rollup.config.ts --configPlugin @rollup/plugin-typescript={\"sourceMap\":false} --watch",
     "test": "vitest run",
+    "test:examples": "cd examples && pnpm test",
     "lint": "biome lint . && biome check . && tsc --noEmit",
+    "knip": "knip",
     "format": "biome format --write . && biome lint --write . && biome check --write ."
   },
   "keywords": [
@@ -63,6 +65,8 @@
     "@rollup/plugin-node-resolve": "^16.0.0",
     "@rollup/plugin-typescript": "^12.0.0",
     "@types/node": "^22.0.0",
+    "@vitest/coverage-v8": "^4.0.0",
+    "knip": "^6.17.1",
     "rollup": "^4.0.0",
     "rollup-plugin-dts": "^6.0.0",
     "tslib": "^2.0.0",

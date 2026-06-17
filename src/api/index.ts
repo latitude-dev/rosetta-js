@@ -40,11 +40,9 @@ export {
   GenAIToolCallResponsePartSchema,
   type GenAIUriPart,
   GenAIUriPartSchema,
-} from "$package/core/genai";
-export type {
-  InputMessages,
-  InputSystem,
-} from "$package/core/input";
+  type InputMessages,
+  type InputSystem,
+} from "$package/core";
 export {
   Provider,
   type ProviderMessage,

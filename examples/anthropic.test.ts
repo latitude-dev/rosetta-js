@@ -12,13 +12,16 @@ import { describe, expect, it } from "vitest";
 
 const hasApiKey = !!process.env.ANTHROPIC_API_KEY;
 
+// Current Anthropic model used for the live API calls below. Bump when models are retired.
+const MODEL = "claude-sonnet-4-6";
+
 describe("Anthropic E2E", () => {
   describe.skipIf(!hasApiKey)("real Anthropic API calls", { timeout: 30000 }, () => {
     const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
 
     it("should translate a real Anthropic message response", async () => {
       const message = await anthropic.messages.create({
-        model: "claude-sonnet-4-20250514",
+        model: MODEL,
         max_tokens: 50,
         messages: [{ role: "user", content: "What is 2+2? Reply in one word." }],
       });
@@ -37,7 +40,7 @@ describe("Anthropic E2E", () => {
 
     it("should translate a conversation with system prompt", async () => {
       const message = await anthropic.messages.create({
-        model: "claude-sonnet-4-20250514",
+        model: MODEL,
         max_tokens: 50,
         system: "You are a helpful assistant. Reply in exactly 3 words.",
         messages: [{ role: "user", content: "Say hello" }],
@@ -55,7 +58,7 @@ describe("Anthropic E2E", () => {
 
     it("should translate tool calls from real API", async () => {
       const message = await anthropic.messages.create({
-        model: "claude-sonnet-4-20250514",
+        model: MODEL,
         max_tokens: 100,
         messages: [{ role: "user", content: "What's the weather in Paris?" }],
         tools: [
@@ -93,7 +96,7 @@ describe("Anthropic E2E", () => {
     it("should translate tool call and response round-trip", async () => {
       // Step 1: Get a tool call from Anthropic
       const message1 = await anthropic.messages.create({
-        model: "claude-sonnet-4-20250514",
+        model: MODEL,
         max_tokens: 100,
         messages: [{ role: "user", content: "What's the weather in Tokyo?" }],
         tools: [
@@ -118,7 +121,7 @@ describe("Anthropic E2E", () => {
 
       // Step 2: Build the tool result and get final response
       const message2 = await anthropic.messages.create({
-        model: "claude-sonnet-4-20250514",
+        model: MODEL,
         max_tokens: 100,
         messages: [
           { role: "user", content: "What's the weather in Tokyo?" },
@@ -180,7 +183,7 @@ describe("Anthropic E2E", () => {
 
     it("should translate real API response to Promptl format", async () => {
       const message = await anthropic.messages.create({
-        model: "claude-sonnet-4-20250514",
+        model: MODEL,
         max_tokens: 10,
         messages: [{ role: "user", content: "Reply with exactly: Hello World" }],
       });
@@ -228,13 +231,119 @@ describe("Anthropic E2E", () => {
       expect(result.messages[0]?.role).toBe("user");
     });
 
+    it("should translate inline system messages (mid-conversation system) to an inline-system target", () => {
+      // Anthropic allows `role: "system"` entries inline in the messages array, in
+      // addition to the separate top-level `system` field. Both are supported as input.
+      // Translating to a target that keeps system inline (Vercel AI) preserves the position.
+      const anthropicMessages = [
+        { role: "user" as const, content: "Write a helper." },
+        { role: "system" as const, content: "This project is written in Go. Write code in Go." },
+        { role: "assistant" as const, content: "Here is the Go helper." },
+      ];
+
+      const result = translate(anthropicMessages, {
+        from: Provider.Anthropic,
+        to: Provider.VercelAI,
+      });
+
+      expect(result.messages).toHaveLength(3);
+      expect(result.messages[0]?.role).toBe("user");
+      // The inline system message keeps its original conversation position
+      expect(result.messages[1]?.role).toBe("system");
+      expect(result.messages[1]?.content).toBe("This project is written in Go. Write code in Go.");
+      expect(result.messages[2]?.role).toBe("assistant");
+    });
+
+    it("should preserve an inline system message's position when extracted to the GenAI system field", () => {
+      const anthropicMessages = [
+        { role: "user" as const, content: "Hello" },
+        { role: "system" as const, content: "Be concise." },
+        { role: "assistant" as const, content: "Hi." },
+      ];
+
+      const result = translate(anthropicMessages, {
+        from: Provider.Anthropic,
+        to: Provider.GenAI,
+      });
+
+      // Translating to GenAI extracts system messages into the separate system field
+      expect(result.messages).toHaveLength(2);
+      expect(result.system).toBeDefined();
+      expect(result.system?.[0]).toMatchObject({ type: "text", content: "Be concise." });
+      // The extracted system part records its original conversation position so it can be
+      // re-inserted at the right spot when translating to an inline-system target.
+      expect(
+        (result.system?.[0]?._provider_metadata?._known_fields as Record<string, unknown> | undefined)?.messageIndex,
+      ).toBe(1);
+    });
+
+    it("should translate a mid_conv_system block built with the real Anthropic SDK type", () => {
+      // Build the conversation with the real SDK `MessageParam` type, including the
+      // `MidConversationSystemBlockParam` (mid_conv_system) block, to verify rosetta
+      // accepts the exact wire shape the Anthropic SDK produces.
+      const anthropicMessages: Anthropic.MessageParam[] = [
+        { role: "user", content: "Write a helper." },
+        {
+          role: "system",
+          content: [
+            {
+              type: "mid_conv_system",
+              content: [{ type: "text", text: "This project is written in Go." }],
+            },
+          ],
+        },
+      ];
+
+      const result = translate(anthropicMessages, {
+        from: Provider.Anthropic,
+        to: Provider.GenAI,
+      });
+
+      // The system-role message is extracted to the GenAI system field; the block's text
+      // is preserved and tagged with its origin so it could be reconstructed later.
+      expect(result.messages).toHaveLength(1);
+      expect(result.messages[0]?.role).toBe("user");
+      expect(result.system?.[0]).toMatchObject({ type: "text", content: "This project is written in Go." });
+      expect(result.system?.[0]?._provider_metadata?._known_fields).toMatchObject({
+        originalType: "mid_conv_system",
+      });
+    });
+
+    it("should translate a mid_conv_system block embedded in a user turn without losing the text", () => {
+      const anthropicMessages: Anthropic.MessageParam[] = [
+        {
+          role: "user",
+          content: [
+            { type: "text", text: "Here is the file." },
+            {
+              type: "mid_conv_system",
+              content: [{ type: "text", text: "Reply only with valid JSON." }],
+            },
+          ],
+        },
+      ];
+
+      const result = translate(anthropicMessages, {
+        from: Provider.Anthropic,
+        to: Provider.GenAI,
+      });
+
+      expect(result.messages).toHaveLength(1);
+      expect(result.messages[0]?.role).toBe("user");
+      expect(result.messages[0]?.parts).toHaveLength(2);
+      expect((result.messages[0]?.parts[1] as { content: string }).content).toBe("Reply only with valid JSON.");
+      expect(result.messages[0]?.parts[1]?._provider_metadata?._known_fields).toMatchObject({
+        originalType: "mid_conv_system",
+      });
+    });
+
     it("should translate Message output format", () => {
       const anthropicMessage = {
         id: "msg_abc123",
         type: "message" as const,
         role: "assistant" as const,
         content: [{ type: "text" as const, text: "Hello! How can I help you today?" }],
-        model: "claude-sonnet-4-20250514",
+        model: MODEL,
         stop_reason: "end_turn" as const,
         stop_sequence: null,
         usage: { input_tokens: 10, output_tokens: 12 },

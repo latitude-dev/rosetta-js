@@ -107,6 +107,234 @@ describe("AnthropicSpecification", () => {
       });
     });
 
+    describe("inline system messages (mid-conversation system)", () => {
+      it("should convert an inline system message with string content at its position", () => {
+        const result = AnthropicSpecification.toGenAI({
+          messages: [
+            { role: "user", content: "Hello" },
+            { role: "system", content: "Terse mode enabled." },
+            { role: "assistant", content: "Hi." },
+          ],
+          direction: "input",
+        });
+
+        expect(result.messages).toHaveLength(3);
+        expect(result.messages[0]?.role).toBe("user");
+        expect(result.messages[1]?.role).toBe("system");
+        expect(result.messages[1]?.parts[0]).toEqual({ type: "text", content: "Terse mode enabled." });
+        expect(result.messages[2]?.role).toBe("assistant");
+      });
+
+      it("should convert an inline system message with text block content", () => {
+        const result = AnthropicSpecification.toGenAI({
+          messages: [
+            { role: "user", content: "Hello" },
+            { role: "system", content: [{ type: "text", text: "Switch to Go." }] },
+          ],
+          direction: "input",
+        });
+
+        expect(result.messages).toHaveLength(2);
+        expect(result.messages[1]?.role).toBe("system");
+        expect(result.messages[1]?.parts[0]).toEqual({ type: "text", content: "Switch to Go." });
+      });
+
+      it("should preserve cache_control on an inline system message text block", () => {
+        const result = AnthropicSpecification.toGenAI({
+          messages: [
+            { role: "user", content: "Hello" },
+            {
+              role: "system",
+              content: [{ type: "text", text: "Operator note", cache_control: { type: "ephemeral" } }],
+            },
+          ],
+          direction: "input",
+        });
+
+        expect(result.messages[1]?.parts[0]?._provider_metadata).toMatchObject({
+          cache_control: { type: "ephemeral" },
+        });
+      });
+
+      it("should keep the separate system field at the front and inline system at its position", () => {
+        const result = AnthropicSpecification.toGenAI({
+          messages: [
+            { role: "user", content: "Hello" },
+            { role: "system", content: "Mid-conversation update." },
+            { role: "assistant", content: "Ok." },
+          ],
+          system: "You are a helpful assistant.",
+          direction: "input",
+        });
+
+        expect(result.messages).toHaveLength(4);
+        // Top-level system maps to the leading system message (cacheable prefix)
+        expect(result.messages[0]?.role).toBe("system");
+        expect(result.messages[0]?.parts[0]).toEqual({ type: "text", content: "You are a helpful assistant." });
+        expect(result.messages[1]?.role).toBe("user");
+        // Inline system retains its original conversation position
+        expect(result.messages[2]?.role).toBe("system");
+        expect(result.messages[2]?.parts[0]).toEqual({ type: "text", content: "Mid-conversation update." });
+        expect(result.messages[3]?.role).toBe("assistant");
+      });
+    });
+
+    describe("mid_conv_system content block", () => {
+      it("should convert a mid_conv_system block to text parts tagged with its origin", () => {
+        const result = AnthropicSpecification.toGenAI({
+          messages: [
+            {
+              role: "user",
+              content: [{ type: "mid_conv_system", content: [{ type: "text", text: "Switch to Go." }] }],
+            },
+          ],
+          direction: "input",
+        });
+
+        expect(result.messages).toHaveLength(1);
+        expect(result.messages[0]?.parts).toHaveLength(1);
+        const part = result.messages[0]?.parts[0];
+        expect(part?.type).toBe("text");
+        expect((part as { content: string }).content).toBe("Switch to Go.");
+        expect(part?._provider_metadata?._known_fields?.originalType).toBe("mid_conv_system");
+      });
+
+      it("should preserve block-level cache_control on the first converted part", () => {
+        const result = AnthropicSpecification.toGenAI({
+          messages: [
+            {
+              role: "user",
+              content: [
+                {
+                  type: "mid_conv_system",
+                  content: [{ type: "text", text: "Operator note" }],
+                  cache_control: { type: "ephemeral" },
+                },
+              ],
+            },
+          ],
+          direction: "input",
+        });
+
+        expect(result.messages[0]?.parts[0]?._provider_metadata).toMatchObject({
+          cache_control: { type: "ephemeral" },
+          _known_fields: { originalType: "mid_conv_system" },
+        });
+      });
+
+      it("should convert each wrapped text block to its own part", () => {
+        const result = AnthropicSpecification.toGenAI({
+          messages: [
+            {
+              role: "user",
+              content: [
+                {
+                  type: "mid_conv_system",
+                  content: [
+                    { type: "text", text: "Rule one." },
+                    { type: "text", text: "Rule two." },
+                  ],
+                },
+              ],
+            },
+          ],
+          direction: "input",
+        });
+
+        expect(result.messages[0]?.parts).toHaveLength(2);
+        expect((result.messages[0]?.parts[0] as { content: string }).content).toBe("Rule one.");
+        expect((result.messages[0]?.parts[1] as { content: string }).content).toBe("Rule two.");
+      });
+
+      it("should handle a system-role message whose content is a mid_conv_system block", () => {
+        const result = AnthropicSpecification.toGenAI({
+          messages: [
+            { role: "user", content: "Hello" },
+            {
+              role: "system",
+              content: [{ type: "mid_conv_system", content: [{ type: "text", text: "Be terse." }] }],
+            },
+          ],
+          direction: "input",
+        });
+
+        expect(result.messages).toHaveLength(2);
+        expect(result.messages[1]?.role).toBe("system");
+        expect((result.messages[1]?.parts[0] as { content: string }).content).toBe("Be terse.");
+      });
+
+      it("should handle a separated system parameter together with a mid_conv_system block", () => {
+        const result = AnthropicSpecification.toGenAI({
+          messages: [
+            { role: "user", content: "Hello" },
+            {
+              role: "user",
+              content: [{ type: "mid_conv_system", content: [{ type: "text", text: "Now switch to Go." }] }],
+            },
+          ],
+          system: "You are a helpful assistant.",
+          direction: "input",
+        });
+
+        expect(result.messages).toHaveLength(3);
+        // Separated system parameter becomes the leading system message
+        expect(result.messages[0]?.role).toBe("system");
+        expect(result.messages[0]?.parts[0]).toEqual({ type: "text", content: "You are a helpful assistant." });
+        // The mid_conv_system block is converted in place, tagged with its origin
+        const midPart = result.messages[2]?.parts[0];
+        expect((midPart as { content: string }).content).toBe("Now switch to Go.");
+        expect(midPart?._provider_metadata?._known_fields?.originalType).toBe("mid_conv_system");
+      });
+    });
+
+    describe("server-side tool result blocks", () => {
+      it("should convert tool-result blocks to tool_call_response, preserving the block type", () => {
+        const types = [
+          "web_fetch_tool_result",
+          "code_execution_tool_result",
+          "bash_code_execution_tool_result",
+          "text_editor_code_execution_tool_result",
+          "tool_search_tool_result",
+        ];
+        for (const type of types) {
+          const result = AnthropicSpecification.toGenAI({
+            messages: [{ role: "user", content: [{ type, tool_use_id: "srvtoolu_1", content: { ok: true } }] }],
+            direction: "input",
+          });
+
+          const part = result.messages[0]?.parts[0];
+          expect(part?.type).toBe("tool_call_response");
+          expect((part as { id?: string }).id).toBe("srvtoolu_1");
+          expect((part as { response?: unknown }).response).toEqual({ ok: true });
+          expect(part?._provider_metadata?._known_fields?.originalType).toBe(type);
+        }
+      });
+    });
+
+    describe("generic (unmodeled) content blocks", () => {
+      it("should pass through a container_upload block (no dedicated conversion)", () => {
+        const result = AnthropicSpecification.toGenAI({
+          messages: [{ role: "user", content: [{ type: "container_upload", file_id: "file_1" }] }],
+          direction: "input",
+        });
+
+        const part = result.messages[0]?.parts[0] as { type: string; file_id?: string };
+        expect(part.type).toBe("container_upload");
+        expect(part.file_id).toBe("file_1");
+      });
+
+      it("should pass through an unknown future block type without throwing", () => {
+        const result = AnthropicSpecification.toGenAI({
+          messages: [{ role: "user", content: [{ type: "some_future_block", foo: 42 }] }],
+          direction: "input",
+        });
+
+        const part = result.messages[0]?.parts[0] as { type: string; foo?: number };
+        expect(part.type).toBe("some_future_block");
+        expect(part.foo).toBe(42);
+      });
+    });
+
     describe("user messages", () => {
       it("should convert user message with string content", () => {
         const result = AnthropicSpecification.toGenAI({
@@ -530,9 +758,9 @@ describe("AnthropicSpecification", () => {
           type: "tool_call_response",
           id: "srvtoolu_abc123",
         });
-        expect(result.messages[0]?.parts[0]?._provider_metadata).toMatchObject({
-          isWebSearchResult: true,
-        });
+        expect(result.messages[0]?.parts[0]?._provider_metadata?._known_fields?.originalType).toBe(
+          "web_search_tool_result",
+        );
       });
     });
 

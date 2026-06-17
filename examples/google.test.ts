@@ -12,6 +12,9 @@ import { describe, expect, it } from "vitest";
 
 const hasApiKey = !!process.env.GEMINI_API_KEY;
 
+// Current Gemini model used for the live API calls below. Bump when models are retired.
+const MODEL = "gemini-2.5-flash";
+
 describe("Google Gemini E2E", () => {
   describe.skipIf(!hasApiKey)("real Gemini API calls", { timeout: 60000 }, () => {
     // biome-ignore lint/style/noNonNullAssertion: API key is checked by skipIf condition
@@ -20,7 +23,7 @@ describe("Google Gemini E2E", () => {
     it("should translate a real Gemini response", async () => {
       const ai = getClient();
       const response = await ai.models.generateContent({
-        model: "gemini-2.0-flash",
+        model: MODEL,
         contents: "What is 2+2? Reply in one word.",
       });
 
@@ -44,7 +47,7 @@ describe("Google Gemini E2E", () => {
     it("should translate a conversation with system instruction", async () => {
       const ai = getClient();
       const response = await ai.models.generateContent({
-        model: "gemini-2.0-flash",
+        model: MODEL,
         config: {
           systemInstruction: "You are a helpful assistant. Reply in exactly 3 words.",
         },
@@ -69,7 +72,7 @@ describe("Google Gemini E2E", () => {
     it("should translate function calls from real API", async () => {
       const ai = getClient();
       const response = await ai.models.generateContent({
-        model: "gemini-2.0-flash",
+        model: MODEL,
         contents: [{ role: "user", parts: [{ text: "What's the weather in Paris?" }] }],
         config: {
           tools: [
@@ -120,7 +123,7 @@ describe("Google Gemini E2E", () => {
       const ai = getClient();
       // First turn
       const response1 = await ai.models.generateContent({
-        model: "gemini-2.0-flash",
+        model: MODEL,
         contents: [{ role: "user", parts: [{ text: "My name is Alice." }] }],
       });
 
@@ -130,7 +133,7 @@ describe("Google Gemini E2E", () => {
 
       // Second turn
       const response2 = await ai.models.generateContent({
-        model: "gemini-2.0-flash",
+        model: MODEL,
         contents: [
           { role: "user", parts: [{ text: "My name is Alice." }] },
           content1,
@@ -165,7 +168,7 @@ describe("Google Gemini E2E", () => {
     it("should translate real API response to Promptl format", async () => {
       const ai = getClient();
       const response = await ai.models.generateContent({
-        model: "gemini-2.0-flash",
+        model: MODEL,
         contents: "Reply with exactly: Hello World",
       });
 
