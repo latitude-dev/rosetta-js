@@ -120,8 +120,9 @@ if (result.error) {
 Messages and system instructions accept flexible formats:
 
 ```typescript
-// Messages: string or array
+// Messages: string, object, or array
 translate("Hello!");                              // String → single message
+translate({ role: "user", content: "Hello!" });   // Single provider message
 translate([{ role: "user", content: "Hello!" }]); // Array of provider messages
 
 // System: string, object, or array

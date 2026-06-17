@@ -41,11 +41,13 @@ export const PromptlSpecification = {
     if (typeof messages === "string") {
       const role = direction === "input" ? "user" : "assistant";
       messages = [{ role, content: [{ type: "text", text: messages }] }];
+    } else if (!Array.isArray(messages)) {
+      messages = [messages];
     }
 
     // Normalize string content to array content for compatibility with promptl library output
     // The library outputs messages with string content, but our schema expects arrays
-    const normalized = messages.map((msg) => {
+    const normalized = (messages as object[]).map((msg) => {
       const m = msg as { role: string; content: unknown };
       if (typeof m.content === "string") {
         return { ...m, content: [{ type: "text", text: m.content }] };

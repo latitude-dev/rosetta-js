@@ -44,10 +44,12 @@ export const VercelAISpecification = {
     if (typeof messages === "string") {
       const role = direction === "input" ? "user" : "assistant";
       messages = [{ role, content: messages }];
+    } else if (!Array.isArray(messages)) {
+      messages = [messages];
     }
 
     // Normalize string content to array format for user/assistant messages
-    const normalized = messages.map((msg) => {
+    const normalized = (messages as object[]).map((msg) => {
       const m = msg as { role: string; content: unknown };
       if (m.role === "user" && typeof m.content === "string") {
         return { ...m, content: [{ type: "text", text: m.content }] };

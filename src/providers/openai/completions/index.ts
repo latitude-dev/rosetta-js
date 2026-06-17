@@ -27,6 +27,8 @@ export const OpenAICompletionsSpecification = {
     if (typeof messages === "string") {
       const role = direction === "input" ? "user" : "assistant";
       messages = [{ role, content: messages }];
+    } else if (!Array.isArray(messages)) {
+      messages = [messages];
     }
 
     // Validate with schema

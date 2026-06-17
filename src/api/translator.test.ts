@@ -90,6 +90,38 @@ describe("translate", () => {
     });
   });
 
+  describe("single message object", () => {
+    it("should wrap a single message object in an array", () => {
+      const message: GenAIMessage = { role: "user", parts: [{ type: "text", content: "Hello" }] };
+
+      const result = translate(message, { from: Provider.GenAI, to: Provider.GenAI });
+
+      expect(result.messages).toHaveLength(1);
+      expect(result.messages[0]?.role).toBe("user");
+      expect(result.messages[0]?.parts[0]).toEqual({ type: "text", content: "Hello" });
+    });
+
+    it("should auto-infer the provider from a single message object", () => {
+      const message = { role: "user" as const, content: [{ type: "text" as const, text: "Hello" }] };
+
+      const result = translate(message);
+
+      expect(result.messages).toHaveLength(1);
+      expect(result.messages[0]?.role).toBe("user");
+      expect(result.messages[0]?.parts[0]).toEqual({ type: "text", content: "Hello" });
+    });
+
+    it("should cross-translate a single message object", () => {
+      const message: GenAIMessage = { role: "assistant", parts: [{ type: "text", content: "Hi there!" }] };
+
+      const result = translate(message, { from: Provider.GenAI, to: Provider.Promptl });
+
+      expect(result.messages).toHaveLength(1);
+      expect(result.messages[0]?.role).toBe("assistant");
+      expect(result.messages[0]?.content[0]).toEqual({ type: "text", text: "Hi there!" });
+    });
+  });
+
   describe("provider auto-inference", () => {
     it("should auto-infer GenAI format when from is not provided", () => {
       const messages: GenAIMessage[] = [{ role: "user", parts: [{ type: "text", content: "Hello" }] }];

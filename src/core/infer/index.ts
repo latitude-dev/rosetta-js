@@ -45,11 +45,14 @@ export function inferProvider(
     return priority[0] ?? Provider.Compat;
   }
 
+  // Normalize a single message object to an array
+  const _messages = Array.isArray(messages) ? messages : [messages];
+
   // Try to match messages against each provider's schema
-  if (messages.length > 0) {
+  if (_messages.length > 0) {
     for (const provider of priority) {
       const spec = getProviderSpecification(provider);
-      const result = spec?.messageSchema.array().safeParse(messages);
+      const result = spec?.messageSchema.array().safeParse(_messages);
       if (result?.success) return provider;
     }
   }

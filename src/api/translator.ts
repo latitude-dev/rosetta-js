@@ -125,7 +125,7 @@ function filterEmptyGenAIMessages(messages: GenAIMessage[]): GenAIMessage[] {
 /**
  * Translate messages from one provider format to another.
  *
- * @param messages - The messages to translate (string or array of provider messages)
+ * @param messages - The messages to translate (string, a single, or an array of provider messages)
  * @param options - Translation options. All optional.
  * @returns The translated messages and optional system instructions
  * @throws Error if translation fails
@@ -190,7 +190,7 @@ export function translate<From extends ProviderSource = Provider, To extends Pro
 /**
  * Safely translate messages, returning an error object instead of throwing.
  *
- * @param messages - The messages to translate (string or array of provider messages)
+ * @param messages - The messages to translate (string, a single, or an array of provider messages)
  * @param options - Translation options. All optional.
  * @returns An object with either error or (messages and optional system)
  */

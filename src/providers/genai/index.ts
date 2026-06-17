@@ -37,6 +37,8 @@ export const GenAISpecification = {
     if (typeof messages === "string") {
       const role = direction === "input" ? "user" : "assistant";
       messages = [{ role, parts: [{ type: "text", content: messages }] }];
+    } else if (!Array.isArray(messages)) {
+      messages = [messages];
     }
     const parsedMessages = GenAIMessageSchema.array().parse(messages);
 
