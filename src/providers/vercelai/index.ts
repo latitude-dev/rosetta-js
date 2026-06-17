@@ -14,10 +14,13 @@ import {
 } from "$package/providers/provider";
 import {
   type VercelAIAssistantMessage,
+  type VercelAICustomPart,
   type VercelAIMessage,
   VercelAIMessageSchema,
   type VercelAIPart,
+  type VercelAIReasoningFilePart,
   type VercelAISystemMessage,
+  VercelAISystemSchema,
   type VercelAIToolMessage,
   type VercelAIUserMessage,
 } from "$package/providers/vercelai/schema";
@@ -39,8 +42,9 @@ export const VercelAISpecification = {
   provider: Provider.VercelAI,
   name: "Vercel AI",
   messageSchema: VercelAIMessageSchema,
+  systemSchema: VercelAISystemSchema,
 
-  toGenAI({ messages, direction }: ProviderToGenAIArgs) {
+  toGenAI({ messages, system, direction }: ProviderToGenAIArgs) {
     if (typeof messages === "string") {
       const role = direction === "input" ? "user" : "assistant";
       messages = [{ role, content: messages }];
@@ -63,6 +67,22 @@ export const VercelAISpecification = {
     const parsedMessages = VercelAIMessageSchema.array().parse(normalized);
 
     const converted: GenAIMessage[] = [];
+
+    // Separated system instructions are converted to inline system messages and
+    // prepended (in order); inline system messages keep their positions.
+    if (system !== undefined) {
+      const parsedSystem = VercelAISystemSchema.parse(system);
+      const systemMessages: VercelAISystemMessage[] =
+        typeof parsedSystem === "string"
+          ? [{ role: "system", content: parsedSystem }]
+          : Array.isArray(parsedSystem)
+            ? parsedSystem
+            : [parsedSystem];
+      for (const sysMsg of systemMessages) {
+        converted.push(vercelAIMessageToGenAI(sysMsg));
+      }
+    }
+
     for (const message of parsedMessages) {
       converted.push(vercelAIMessageToGenAI(message));
     }
@@ -97,6 +117,99 @@ function buildToolCallNameMap(messages: GenAIMessage[]): Map<string, string> {
     }
   }
   return map;
+}
+
+/** Whether a value is a v7 tagged FileData object (discriminated on `type`). */
+function isTaggedFileData(
+  value: unknown,
+): value is { type: "data" | "url" | "reference" | "text"; [key: string]: unknown } {
+  if (typeof value !== "object" || value === null) return false;
+  if (value instanceof URL || value instanceof Uint8Array || value instanceof ArrayBuffer) return false;
+  const type = (value as { type?: unknown }).type;
+  return type === "data" || type === "url" || type === "reference" || type === "text";
+}
+
+/** Whether a value is a bare ProviderReference object (a plain string record, v7). */
+function isProviderReference(value: unknown): value is Record<string, string> {
+  if (typeof value !== "object" || value === null) return false;
+  if (value instanceof URL || value instanceof Uint8Array || value instanceof ArrayBuffer) return false;
+  return true;
+}
+
+/**
+ * Converts a Vercel AI file-like data value (v7 tagged `FileData`, bare
+ * `ProviderReference`, `URL`, or inline `DataContent`) into GenAI parts. Shared by the
+ * `file` and `reasoning-file` conversions. `originalTypeOverride`, when set, is stamped
+ * as `originalType` on every produced part.
+ */
+function fileLikeDataToGenAI(
+  value: unknown,
+  modality: string,
+  mediaType: string | undefined,
+  existingMetadata: Record<string, unknown> | undefined,
+  extraFields: Record<string, unknown>,
+  originalTypeOverride?: string,
+): GenAIPart[] {
+  const mimeFields = mediaType ? { mime_type: mediaType } : {};
+
+  const makeBlob = (content: string, defaultOriginalType?: string): GenAIPart => {
+    const originalType = originalTypeOverride ?? defaultOriginalType;
+    const metadata = storeMetadata(existingMetadata, extraFields, originalType ? { originalType } : {});
+    return { type: "blob", modality, content, ...mimeFields, ...(metadata ? { _provider_metadata: metadata } : {}) };
+  };
+
+  const makeUri = (uri: string): GenAIPart => {
+    const metadata = storeMetadata(
+      existingMetadata,
+      extraFields,
+      originalTypeOverride ? { originalType: originalTypeOverride } : {},
+    );
+    return { type: "uri", modality, uri, ...mimeFields, ...(metadata ? { _provider_metadata: metadata } : {}) };
+  };
+
+  const makeFileReference = (reference: Record<string, string>): GenAIPart => {
+    const originalType = originalTypeOverride ?? "file-reference";
+    const metadata = storeMetadata(
+      existingMetadata,
+      { ...extraFields, providerReference: reference },
+      { originalType },
+    );
+    const fileId = Object.values(reference)[0] ?? "";
+    return {
+      type: "file",
+      modality,
+      file_id: fileId,
+      ...mimeFields,
+      ...(metadata ? { _provider_metadata: metadata } : {}),
+    };
+  };
+
+  const fromScalar = (scalar: unknown): GenAIPart => {
+    if (isUrl(scalar)) return makeUri(getUrlString(scalar));
+    if (scalar instanceof Uint8Array || scalar instanceof ArrayBuffer) return makeBlob(binaryToBase64(scalar));
+    return makeBlob(String(scalar));
+  };
+
+  if (isTaggedFileData(value)) {
+    switch (value.type) {
+      case "data":
+        // biome-ignore lint/complexity/useLiteralKeys: index-signature access requires brackets
+        return [fromScalar(value["data"])];
+      case "url":
+        // biome-ignore lint/complexity/useLiteralKeys: index-signature access requires brackets
+        return [makeUri(getUrlString(value["url"] as URL | string))];
+      case "reference":
+        // biome-ignore lint/complexity/useLiteralKeys: index-signature access requires brackets
+        return [makeFileReference(value["reference"] as Record<string, string>)];
+      case "text":
+        // biome-ignore lint/complexity/useLiteralKeys: index-signature access requires brackets
+        return [makeBlob(value["text"] as string, "file-text")];
+    }
+  }
+  if (isProviderReference(value)) {
+    return [makeFileReference(value)];
+  }
+  return [fromScalar(value)];
 }
 
 /** Convert a VercelAI part to GenAI parts. */
@@ -146,6 +259,23 @@ function vercelAIPartToGenAI(part: VercelAIPart, knownPartKeys: string[]): GenAI
           },
         ];
       }
+      // v7: bare ProviderReference object → GenAI file part referenced by id
+      if (isProviderReference(imageValue)) {
+        const refMetadata = storeMetadata(
+          existingMetadata,
+          { ...extraFields, providerReference: imageValue },
+          { originalType: "file-reference" },
+        );
+        return [
+          {
+            type: "file",
+            modality: "image",
+            file_id: Object.values(imageValue)[0] ?? "",
+            ...(part.mediaType ? { mime_type: part.mediaType } : {}),
+            ...(refMetadata ? { _provider_metadata: refMetadata } : {}),
+          },
+        ];
+      }
       // String that's not a URL - assume base64
       return [
         {
@@ -159,43 +289,37 @@ function vercelAIPartToGenAI(part: VercelAIPart, knownPartKeys: string[]): GenAI
     }
 
     case "file": {
-      const metadata = buildMetadata();
-      const fileValue = part.data;
+      // Handles v6 (string/URL/binary) and v7 (tagged FileData / ProviderReference).
       const modality = inferModality(part.mediaType);
+      return fileLikeDataToGenAI(part.data, modality, part.mediaType, existingMetadata, extraFields);
+    }
 
-      if (isUrl(fileValue)) {
-        return [
-          {
-            type: "uri",
-            modality,
-            uri: getUrlString(fileValue),
-            mime_type: part.mediaType,
-            ...(metadata ? { _provider_metadata: metadata } : {}),
-          },
-        ];
-      }
-      // Binary data - convert to base64
-      if (fileValue instanceof Uint8Array || fileValue instanceof ArrayBuffer) {
-        return [
-          {
-            type: "blob",
-            modality,
-            content: binaryToBase64(fileValue),
-            mime_type: part.mediaType,
-            ...(metadata ? { _provider_metadata: metadata } : {}),
-          },
-        ];
-      }
-      // String that's not a URL - assume base64
+    case "custom": {
+      // v7-only part, no v6 equivalent: keep as a generic part (dropped on v6 emit).
+      const customPart = part as VercelAICustomPart;
+      const metadata = storeMetadata(existingMetadata, extraFields, { originalType: "custom" });
       return [
         {
-          type: "blob",
-          modality,
-          content: String(fileValue),
-          mime_type: part.mediaType,
+          type: "custom",
+          content: "",
+          kind: customPart.kind,
           ...(metadata ? { _provider_metadata: metadata } : {}),
         },
       ];
+    }
+
+    case "reasoning-file": {
+      // v7-only part: map file-like reasoning data to the closest GenAI part.
+      const reasoningFilePart = part as VercelAIReasoningFilePart;
+      const modality = inferModality(reasoningFilePart.mediaType);
+      return fileLikeDataToGenAI(
+        reasoningFilePart.data,
+        modality,
+        reasoningFilePart.mediaType,
+        existingMetadata,
+        extraFields,
+        "reasoning-file",
+      );
     }
 
     case "reasoning": {
@@ -363,6 +487,7 @@ function vercelAIMessageToGenAI(message: VercelAIMessage): GenAIMessage {
           "data",
           "filename",
           "mediaType",
+          "kind",
           "toolCallId",
           "toolName",
           "input",
@@ -559,6 +684,10 @@ function genAIPartToVercelAI(
           // biome-ignore lint/complexity/useLiteralKeys: required for TypeScript index signature access
           ...("reason" in part ? { reason: String(genericPart["reason"]) } : {}),
         } as VercelAIPart);
+      }
+      // v7 `custom` has no v6 equivalent → drop when emitting v6.
+      if (known.originalType === "custom") {
+        return null;
       }
       // Generic part - convert to text if it has content
       if ("content" in part && typeof part.content === "string") {

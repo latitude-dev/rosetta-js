@@ -6,7 +6,9 @@
  */
 
 import { openai } from "@ai-sdk/openai";
+import { openai as openaiV7 } from "@ai-sdk/openai7";
 import { generateText } from "ai";
+import { generateText as generateTextV7 } from "ai7";
 import { Provider, translate } from "rosetta-ai";
 import { describe, expect, it } from "vitest";
 import { z } from "zod";
@@ -114,6 +116,73 @@ describe("VercelAI E2E", () => {
       expect(result.messages.length).toBeGreaterThan(0);
       const assistantMsg = result.messages.find((m) => m.role === "assistant");
       expect(assistantMsg).toBeDefined();
+    });
+  });
+
+  // End-to-end round-trip against the real v7 SDK (aliased as `ai7` / `@ai-sdk/openai7`).
+  describe.skipIf(!hasApiKey)("real v7 SDK round-trip", { timeout: 30000 }, () => {
+    it("should ingest real v7 generateText output (v7 -> Rosetta)", async () => {
+      const { response } = await generateTextV7({
+        model: openaiV7("gpt-4o-mini"),
+        messages: [{ role: "user", content: "What is 2+2? Reply in one sentence." }],
+        maxOutputTokens: 50,
+      });
+
+      // response.messages are real v7 ModelMessage[]
+      const result = translate(response.messages, {
+        from: Provider.VercelAI,
+        to: Provider.GenAI,
+      });
+
+      expect(result.messages.length).toBeGreaterThan(0);
+      expect(result.messages.some((m) => m.role === "assistant")).toBe(true);
+    });
+
+    it("should feed Rosetta's v6 output back into v7 generateText (Rosetta -> v7)", async () => {
+      // Rosetta emits canonical v6 with system inline.
+      const { messages: rosettaMessages } = translate(
+        [
+          { role: "system", parts: [{ type: "text", content: "You are concise. Reply in 3 words." }] },
+          { role: "user", parts: [{ type: "text", content: "Greet me." }] },
+        ],
+        { from: Provider.GenAI, to: Provider.VercelAI },
+      );
+
+      const { text } = await generateTextV7({
+        model: openaiV7("gpt-4o-mini"),
+        messages: rosettaMessages,
+        // REQUIRED: Rosetta emits system inline; v7 rejects inline system by default.
+        allowSystemInMessages: true,
+        maxOutputTokens: 20,
+      });
+
+      expect(text).toBeTruthy();
+    });
+
+    it("should round-trip real v7 tool calls through Rosetta", async () => {
+      const { response } = await generateTextV7({
+        model: openaiV7("gpt-4o-mini"),
+        messages: [{ role: "user", content: "What's the weather in Paris?" }],
+        tools: {
+          get_weather: {
+            description: "Get the current weather for a location",
+            inputSchema: z.object({ location: z.string().describe("The city name") }),
+          },
+        },
+        toolChoice: "required",
+        maxOutputTokens: 100,
+      });
+
+      const result = translate(response.messages, {
+        from: Provider.VercelAI,
+        to: Provider.GenAI,
+      });
+
+      const assistantMsg = result.messages.find((m) => m.role === "assistant");
+      expect(assistantMsg).toBeDefined();
+      const toolCallPart = assistantMsg?.parts.find((p) => p.type === "tool_call");
+      expect(toolCallPart).toBeDefined();
+      expect((toolCallPart as { name: string }).name).toBe("get_weather");
     });
   });
 
@@ -292,6 +361,151 @@ describe("VercelAI E2E", () => {
       expect(backToVercelAI.messages[0]?.content).toBe("You are helpful.");
       expect(backToVercelAI.messages[1]?.content).toBe("Hello");
       expect(backToVercelAI.messages[2]?.content).toBe("Hi there!");
+    });
+  });
+
+  // v7-only part shapes a basic generateText call won't emit; run without an API key.
+  describe("hardcoded v7 message shapes (no API key required)", () => {
+    it("should translate a tagged FileData (data) file part to a blob", () => {
+      const messages = [
+        {
+          role: "user" as const,
+          content: [
+            { type: "file" as const, data: { type: "data" as const, data: "SGVsbG8=" }, mediaType: "text/plain" },
+          ],
+        },
+      ];
+
+      const result = translate(messages, { from: Provider.VercelAI, to: Provider.GenAI });
+      expect(result.messages[0]?.parts[0]?.type).toBe("blob");
+    });
+
+    it("should translate a provider-reference file part to a GenAI file part", () => {
+      const messages = [
+        {
+          role: "user" as const,
+          content: [
+            {
+              type: "file" as const,
+              data: { type: "reference" as const, reference: { openai: "file-abc" } },
+              mediaType: "application/pdf",
+            },
+          ],
+        },
+      ];
+
+      const result = translate(messages, { from: Provider.VercelAI, to: Provider.GenAI });
+      const part = result.messages[0]?.parts[0] as { type: string; file_id: string };
+      expect(part.type).toBe("file");
+      expect(part.file_id).toBe("file-abc");
+    });
+
+    it("should translate an image with a ProviderReference to an image file part", () => {
+      const messages = [
+        {
+          role: "user" as const,
+          content: [{ type: "image" as const, image: { openai: "file-img" }, mediaType: "image/png" }],
+        },
+      ];
+
+      const result = translate(messages, { from: Provider.VercelAI, to: Provider.GenAI });
+      const part = result.messages[0]?.parts[0] as { type: string; modality: string };
+      expect(part.type).toBe("file");
+      expect(part.modality).toBe("image");
+    });
+
+    it("should keep a v7 custom part to GenAI but drop it on v6 emit", () => {
+      const messages = [
+        {
+          role: "assistant" as const,
+          content: [
+            { type: "custom" as const, kind: "acme.widget" },
+            { type: "text" as const, text: "hi" },
+          ],
+        },
+      ];
+
+      // to GenAI: custom preserved as a generic part
+      const toGenAI = translate(messages, { from: Provider.VercelAI, to: Provider.GenAI });
+      expect(toGenAI.messages[0]?.parts.some((p) => p.type === "custom")).toBe(true);
+
+      // to VercelAI (canonical v6): custom dropped, text retained
+      const toVercel = translate(messages, { from: Provider.VercelAI, to: Provider.VercelAI });
+      const content = toVercel.messages[0]?.content;
+      const types = Array.isArray(content) ? content.map((p) => (p as { type: string }).type) : ["text"];
+      expect(types).not.toContain("custom");
+      expect(types).toContain("text");
+    });
+
+    it("should translate a v7 reasoning-file assistant part to a blob", () => {
+      const messages = [
+        {
+          role: "assistant" as const,
+          content: [
+            {
+              type: "reasoning-file" as const,
+              data: { type: "data" as const, data: "cmVhc29u" },
+              mediaType: "text/plain",
+            },
+          ],
+        },
+      ];
+
+      const result = translate(messages, { from: Provider.VercelAI, to: Provider.GenAI });
+      expect(result.messages[0]?.parts[0]?.type).toBe("blob");
+    });
+
+    it("should translate tool-result content with v7 file / file-reference / image-file-reference members", () => {
+      const messages = [
+        {
+          role: "tool" as const,
+          content: [
+            {
+              type: "tool-result" as const,
+              toolCallId: "call_1",
+              toolName: "lookup",
+              output: {
+                type: "content" as const,
+                value: [
+                  { type: "file" as const, data: { type: "data" as const, data: "Zm9v" }, mediaType: "text/plain" },
+                  { type: "file-reference" as const, providerReference: { openai: "file-a" } },
+                  { type: "image-file-reference" as const, providerReference: { openai: "file-b" } },
+                ],
+              },
+            },
+          ],
+        },
+      ];
+
+      const result = translate(messages, { from: Provider.VercelAI, to: Provider.GenAI });
+      expect(result.messages[0]?.parts[0]?.type).toBe("tool_call_response");
+    });
+
+    it("should accept system via the separated system field (string)", () => {
+      const result = translate([{ role: "user" as const, content: "Hello" }], {
+        from: Provider.VercelAI,
+        to: Provider.GenAI,
+        system: "You are helpful.",
+      });
+
+      // GenAI extracts system instructions into the system field
+      expect(result.system).toBeDefined();
+    });
+
+    it("should accept system as an array of SystemModelMessage objects (emitted inline)", () => {
+      const result = translate([{ role: "user" as const, content: "Hello" }], {
+        from: Provider.VercelAI,
+        to: Provider.VercelAI,
+        system: [
+          { role: "system" as const, content: "First." },
+          { role: "system" as const, content: "Second." },
+        ],
+      });
+
+      // VercelAI emits system inline, prepended in order before the conversation
+      expect(result.messages[0]?.content).toBe("First.");
+      expect(result.messages[1]?.content).toBe("Second.");
+      expect(result.messages[2]?.role).toBe("user");
     });
   });
 

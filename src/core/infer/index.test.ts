@@ -235,6 +235,53 @@ describe("inferProvider", () => {
     });
   });
 
+  describe("VercelAI v7-shaped conversation", () => {
+    // v7-only parts (tagged FileData, reasoning-file, custom); the `tool` message is
+    // what distinguishes VercelAI from higher-priority providers.
+    const messages = [
+      { role: "system" as const, content: "You are helpful." },
+      {
+        role: "user" as const,
+        content: [
+          { type: "text" as const, text: "Summarize this file." },
+          { type: "file" as const, data: { type: "data" as const, data: "abc" }, mediaType: "text/plain" },
+        ],
+      },
+      {
+        role: "assistant" as const,
+        content: [
+          { type: "reasoning-file" as const, data: { type: "data" as const, data: "xyz" }, mediaType: "text/plain" },
+          { type: "custom" as const, kind: "acme.widget" },
+          { type: "tool-call" as const, toolCallId: "tc_1", toolName: "summarize", input: {} },
+        ],
+      },
+      {
+        role: "tool" as const,
+        content: [
+          {
+            type: "tool-result" as const,
+            toolCallId: "tc_1",
+            toolName: "summarize",
+            output: { type: "json" as const, value: { ok: true } },
+          },
+        ],
+      },
+    ];
+
+    it("should infer VercelAI for v7-only message shapes", () => {
+      expect(inferProvider(messages)).toBe(Provider.VercelAI);
+    });
+  });
+
+  describe("VercelAI system-field inference", () => {
+    it("should infer VercelAI from a separated system message object", () => {
+      // A bare { role: "system", content: string } matches the VercelAI system schema.
+      expect(inferProvider([], { role: "system", content: "be nice" }, [Provider.VercelAI, Provider.Compat])).toBe(
+        Provider.VercelAI,
+      );
+    });
+  });
+
   describe("unknown message schemas (Compat fallback)", () => {
     it("should fall back to Compat for messages with no standard fields", () => {
       const messages = [

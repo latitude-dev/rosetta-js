@@ -3,7 +3,7 @@
  */
 
 import { describe, expect, it } from "vitest";
-import { binaryToBase64 } from "$package/utils";
+import { binaryToBase64, inferModality } from "$package/utils";
 
 describe("binaryToBase64", () => {
   it("should convert a small Uint8Array to base64", () => {
@@ -85,5 +85,55 @@ describe("binaryToBase64", () => {
     const result = binaryToBase64(bytes.buffer);
     expect(result).toBeTruthy();
     expect(typeof result).toBe("string");
+  });
+});
+
+describe("inferModality", () => {
+  it("should infer image from a full IANA image type", () => {
+    expect(inferModality("image/png")).toBe("image");
+  });
+
+  it("should infer video from a full IANA video type", () => {
+    expect(inferModality("video/mp4")).toBe("video");
+  });
+
+  it("should infer audio from a full IANA audio type", () => {
+    expect(inferModality("audio/mpeg")).toBe("audio");
+  });
+
+  it("should infer document from a full IANA text type", () => {
+    expect(inferModality("text/plain")).toBe("document");
+  });
+
+  it("should infer document from an application type", () => {
+    expect(inferModality("application/pdf")).toBe("document");
+  });
+
+  it("should infer image from a bare 'image' segment (v7)", () => {
+    expect(inferModality("image")).toBe("image");
+  });
+
+  it("should infer video from a bare 'video' segment (v7)", () => {
+    expect(inferModality("video")).toBe("video");
+  });
+
+  it("should infer audio from a bare 'audio' segment (v7)", () => {
+    expect(inferModality("audio")).toBe("audio");
+  });
+
+  it("should infer document from a bare 'text' segment (v7)", () => {
+    expect(inferModality("text")).toBe("document");
+  });
+
+  it("should infer image from an 'image/*' wildcard (v7)", () => {
+    expect(inferModality("image/*")).toBe("image");
+  });
+
+  it("should default to document for undefined", () => {
+    expect(inferModality(undefined)).toBe("document");
+  });
+
+  it("should default to document for an unknown top-level segment", () => {
+    expect(inferModality("model/gltf-binary")).toBe("document");
   });
 });

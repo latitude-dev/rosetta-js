@@ -251,24 +251,23 @@ if (result.error) {
 }
 ```
 
-
-
 ## Supported Providers
 
-| Provider | toGenAI | fromGenAI | Separated System | Description |
-|----------|---------|-----------|-----------------|-------------|
-| GenAI | ✅ | ✅ | Optional | Intermediate format (default target) |
-| Promptl | ✅ | ✅ | - | [promptl-ai](https://github.com/latitude-dev/promptl) format |
-| Vercel AI | ✅ | ✅ | - | Vercel AI SDK messages |
-| OpenAI Completions | ✅ | - | - | Chat Completions API |
-| OpenAI Responses | ✅ | - | - | Responses API |
-| Anthropic | ✅ | - | Yes | Messages API |
-| Google Gemini | ✅ | - | Yes | GenerateContent API |
-| Compat | ✅ | - | Optional | Universal fallback |
+| Provider | toGenAI | fromGenAI | System In | System Out | Description |
+|----------|---------|-----------|-----------|------------|-------------|
+| GenAI | ✅ | ✅ | Both | Separated | Intermediate format (default target) |
+| Promptl | ✅ | ✅ | Inline | Inline | [promptl-ai](https://github.com/latitude-dev/promptl) format |
+| Vercel AI | ✅ (v6/7) | ✅ (v6) | Both | Inline | Vercel AI SDK messages |
+| OpenAI Completions | ✅ | - | Inline | - | Chat Completions API |
+| OpenAI Responses | ✅ | - | Inline | - | Responses API |
+| Anthropic | ✅ | - | Both | - | Messages API |
+| Google Gemini | ✅ | - | Both | - | GenerateContent API |
+| Compat | ✅ | - | Both | - | Universal fallback |
 
 - **toGenAI** = Can translate *from* this provider to GenAI (source)
 - **fromGenAI** = Can translate *to* this provider from GenAI (target)
-- **Separated System** = Provider separates system instructions from messages (use the `system` option if needed)
+- **System In** = How system instructions are accepted as input: *Inline* (`system` messages within the conversation), *Separated* (`system` field), or *Both*
+- **System Out** = Where system instructions are emitted as output: *Inline* (`system` messages within the conversation), *Separated* (`system` field)
 
 **System message order preservation**: When translating to a provider that separates system instructions (like GenAI), system messages are extracted from the conversation and returned in the `system` field. Rosetta preserves the original position of each system message so that when translating back to a provider with inline system messages (like Promptl or Vercel AI), the system messages are re-inserted at their original positions in the conversation.
 
