@@ -8,6 +8,7 @@
  * Key features:
  * - Handles both MessageParam (input) and Message (output) formats
  * - Supports system instructions as a separate parameter
+ * - Supports inline system messages: the "system" role and the mid_conv_system block
  * - Supports extended thinking (thinking/redacted_thinking blocks)
  * - Supports tool use and tool results
  * - Supports images (base64 and URL) and documents
@@ -17,9 +18,18 @@
 import type { GenAIMessage, GenAIPart } from "$package/core/genai";
 import {
   type AnthropicContentBlock,
+  type AnthropicDocumentBlock,
+  type AnthropicImageBlock,
   type AnthropicMessage,
   AnthropicMessageSchema,
+  type AnthropicMidConvSystemBlock,
+  type AnthropicRedactedThinkingBlock,
+  type AnthropicServerToolUseBlock,
   AnthropicSystemSchema,
+  type AnthropicTextBlock,
+  type AnthropicThinkingBlock,
+  type AnthropicToolResultBlock,
+  type AnthropicToolUseBlock,
 } from "$package/providers/anthropic/schema";
 import { Provider, type ProviderSpecification, type ProviderToGenAIArgs } from "$package/providers/provider";
 import { extractExtraFields, readMetadata, storeMetadata, withMetadata } from "$package/utils";
@@ -107,7 +117,7 @@ function anthropicMessageToGenAI(message: AnthropicMessage): GenAIMessage {
   if (typeof message.content === "string") {
     parts.push({ type: "text", content: message.content });
   } else {
-    // Handle array of content blocks
+    // Handle array of content blocks (generic blocks are handled by the default branch)
     for (const block of message.content) {
       parts.push(...convertContentBlock(block));
     }
@@ -149,6 +159,7 @@ function mapStopReason(stopReason: string): string {
 
 /** Content block keys that are handled explicitly during conversion. */
 const KNOWN_TEXT_KEYS = ["type", "text", "_provider_metadata", "_providerMetadata"];
+const KNOWN_MID_CONV_SYSTEM_KEYS = ["type", "content", "_provider_metadata", "_providerMetadata"];
 const KNOWN_THINKING_KEYS = ["type", "thinking", "signature", "_provider_metadata", "_providerMetadata"];
 const KNOWN_REDACTED_THINKING_KEYS = ["type", "data", "_provider_metadata", "_providerMetadata"];
 const KNOWN_TOOL_USE_KEYS = ["type", "id", "name", "input", "_provider_metadata", "_providerMetadata"];
@@ -163,71 +174,99 @@ const KNOWN_TOOL_RESULT_KEYS = [
 const KNOWN_IMAGE_KEYS = ["type", "source", "_provider_metadata", "_providerMetadata"];
 const KNOWN_DOCUMENT_KEYS = ["type", "source", "_provider_metadata", "_providerMetadata"];
 
-/** Converts a content block to GenAI parts. */
+/** Converts a content block to GenAI parts. Unmodeled (generic) blocks fall through to `default`. */
 function convertContentBlock(block: AnthropicContentBlock): GenAIPart[] {
   const existingMetadata = readMetadata(block as unknown as Record<string, unknown>);
 
   switch (block.type) {
     case "text": {
-      const extraFields = extractExtraFields(block, KNOWN_TEXT_KEYS as (keyof typeof block)[]);
-      return [withMetadata({ type: "text", content: block.text }, extraFields)];
+      const b = block as AnthropicTextBlock;
+      const extraFields = extractExtraFields(b, KNOWN_TEXT_KEYS as (keyof typeof b)[]);
+      return [withMetadata({ type: "text", content: b.text }, extraFields)];
+    }
+
+    case "mid_conv_system": {
+      // Convert each wrapped text block to a GenAI text part, tagging origin. Block-level
+      // extras (e.g. cache_control on the block itself) are attached to the first part.
+      const b = block as AnthropicMidConvSystemBlock;
+      const blockExtra = extractExtraFields(b, KNOWN_MID_CONV_SYSTEM_KEYS as (keyof typeof b)[]);
+      const parts: GenAIPart[] = [];
+      b.content.forEach((textBlock, index) => {
+        const [part] = convertContentBlock(textBlock);
+        if (!part) return;
+        const partMetadata = readMetadata(part as unknown as Record<string, unknown>);
+        const baseMetadata = index === 0 ? { ...existingMetadata, ...partMetadata } : partMetadata;
+        const extra = index === 0 ? blockExtra : {};
+        const metadata = storeMetadata(baseMetadata, extra, { originalType: "mid_conv_system" });
+        const { _provider_metadata, _providerMetadata, ...basePart } = part as GenAIPart & {
+          _provider_metadata?: unknown;
+          _providerMetadata?: unknown;
+        };
+        parts.push({ ...basePart, ...(metadata ? { _provider_metadata: metadata } : {}) } as GenAIPart);
+      });
+      return parts;
     }
 
     case "thinking": {
-      const extraFields = extractExtraFields(block, KNOWN_THINKING_KEYS as (keyof typeof block)[]);
+      const b = block as AnthropicThinkingBlock;
+      const extraFields = extractExtraFields(b, KNOWN_THINKING_KEYS as (keyof typeof b)[]);
       // Store signature in extra fields for potential round-trip
-      const metadata = storeMetadata(existingMetadata, { signature: block.signature, ...extraFields }, {});
+      const metadata = storeMetadata(existingMetadata, { signature: b.signature, ...extraFields }, {});
       return [
         {
           type: "reasoning",
-          content: block.thinking,
+          content: b.thinking,
           ...(metadata ? { _provider_metadata: metadata } : {}),
         },
       ];
     }
 
     case "redacted_thinking": {
-      const extraFields = extractExtraFields(block, KNOWN_REDACTED_THINKING_KEYS as (keyof typeof block)[]);
+      const b = block as AnthropicRedactedThinkingBlock;
+      const extraFields = extractExtraFields(b, KNOWN_REDACTED_THINKING_KEYS as (keyof typeof b)[]);
       // Map to reasoning with originalType in known fields
       const metadata = storeMetadata(existingMetadata, extraFields, { originalType: "redacted_thinking" });
       return [
         {
           type: "reasoning",
-          content: block.data,
+          content: b.data,
           ...(metadata ? { _provider_metadata: metadata } : {}),
         },
       ];
     }
 
     case "tool_use": {
-      const extraFields = extractExtraFields(block, KNOWN_TOOL_USE_KEYS as (keyof typeof block)[]);
-      return [withMetadata({ type: "tool_call", id: block.id, name: block.name, arguments: block.input }, extraFields)];
+      const b = block as AnthropicToolUseBlock;
+      const extraFields = extractExtraFields(b, KNOWN_TOOL_USE_KEYS as (keyof typeof b)[]);
+      return [withMetadata({ type: "tool_call", id: b.id, name: b.name, arguments: b.input }, extraFields)];
     }
 
     case "server_tool_use": {
       // Built-in tool like web_search - convert to tool_call
-      const extraFields = extractExtraFields(block, KNOWN_TOOL_USE_KEYS as (keyof typeof block)[]);
+      const b = block as AnthropicServerToolUseBlock;
+      const extraFields = extractExtraFields(b, KNOWN_TOOL_USE_KEYS as (keyof typeof b)[]);
       const metadata = storeMetadata(existingMetadata, { isServerTool: true, ...extraFields }, {});
       return [
         {
           type: "tool_call",
-          id: block.id,
-          name: block.name,
-          arguments: block.input,
+          id: b.id,
+          name: b.name,
+          arguments: b.input,
           ...(metadata ? { _provider_metadata: metadata } : {}),
         },
       ];
     }
 
     case "tool_result": {
-      const extraFields = extractExtraFields(block, KNOWN_TOOL_RESULT_KEYS as (keyof typeof block)[]);
-      const response = convertToolResultContent(block.content);
+      const b = block as AnthropicToolResultBlock;
+      const extraFields = extractExtraFields(b, KNOWN_TOOL_RESULT_KEYS as (keyof typeof b)[]);
+      const response = convertToolResultContent(b.content);
       // Store isError in known fields
-      const metadata = storeMetadata(existingMetadata, extraFields, block.is_error ? { isError: true } : {});
+      const metadata = storeMetadata(existingMetadata, extraFields, b.is_error ? { isError: true } : {});
       return [
         {
           type: "tool_call_response",
-          id: block.tool_use_id,
+          id: b.tool_use_id,
           response,
           ...(metadata ? { _provider_metadata: metadata } : {}),
         },
@@ -235,53 +274,32 @@ function convertContentBlock(block: AnthropicContentBlock): GenAIPart[] {
     }
 
     case "image": {
-      const extraFields = extractExtraFields(block, KNOWN_IMAGE_KEYS as (keyof typeof block)[]);
-      return [convertImageBlock(block.source, extraFields, existingMetadata)];
+      const b = block as AnthropicImageBlock;
+      const extraFields = extractExtraFields(b, KNOWN_IMAGE_KEYS as (keyof typeof b)[]);
+      return [convertImageBlock(b.source, extraFields, existingMetadata)];
     }
 
     case "document": {
-      const extraFields = extractExtraFields(block, KNOWN_DOCUMENT_KEYS as (keyof typeof block)[]);
-      return convertDocumentBlock(block.source, extraFields, existingMetadata);
+      const b = block as AnthropicDocumentBlock;
+      const extraFields = extractExtraFields(b, KNOWN_DOCUMENT_KEYS as (keyof typeof b)[]);
+      return convertDocumentBlock(b.source, extraFields, existingMetadata);
     }
 
-    case "web_search_tool_result": {
-      // Convert web search results to tool_call_response
-      const extraFields = extractExtraFields(block, [
-        "type",
-        "tool_use_id",
-        "content",
-        "_provider_metadata",
-        "_providerMetadata",
-      ] as (keyof typeof block)[]);
-      const metadata = storeMetadata(existingMetadata, { isWebSearchResult: true, ...extraFields }, {});
+    case "web_search_tool_result":
+    case "web_fetch_tool_result":
+    case "code_execution_tool_result":
+    case "bash_code_execution_tool_result":
+    case "text_editor_code_execution_tool_result":
+    case "tool_search_tool_result": {
+      // Server-side tool results - convert to tool_call_response, preserving the block type.
+      const b = block as { type: string; tool_use_id: string; content?: unknown };
+      const extraFields = extractExtraFields(b, KNOWN_TOOL_RESULT_KEYS as (keyof typeof b)[]);
+      const metadata = storeMetadata(existingMetadata, extraFields, { originalType: b.type });
       return [
         {
           type: "tool_call_response",
-          id: block.tool_use_id,
-          response: block.content,
-          ...(metadata ? { _provider_metadata: metadata } : {}),
-        },
-      ];
-    }
-
-    case "search_result": {
-      // RAG search result - convert to generic part
-      const extraFields = extractExtraFields(block, [
-        "type",
-        "source",
-        "title",
-        "content",
-        "_provider_metadata",
-        "_providerMetadata",
-      ] as (keyof typeof block)[]);
-      const textContent = block.content.map((t) => t.text).join("\n");
-      const metadata = storeMetadata(existingMetadata, extraFields, {});
-      return [
-        {
-          type: "search_result",
-          source: block.source,
-          title: block.title,
-          content: textContent,
+          id: b.tool_use_id,
+          response: b.content,
           ...(metadata ? { _provider_metadata: metadata } : {}),
         },
       ];

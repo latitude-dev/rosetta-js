@@ -1397,7 +1397,9 @@ pnpm install       # Install dependencies
 pnpm build         # Build the package (DO NOT run from AI sandbox - freezes)
 pnpm test          # Run unit tests
 pnpm lint          # Check for lint, format and type errors
+pnpm knip          # Check for unused files, dependencies, and exports
 pnpm format        # Format code and fixable lint errors
+pnpm test:examples # Run the E2E tests in examples/ (no need to cd)
 
 # Examples / E2E tests (run from examples/)
 cd examples
@@ -1405,7 +1407,9 @@ pnpm install       # Install example dependencies
 pnpm test          # Run E2E tests (imports from src, no rebuild needed)
 ```
 
-**AI Agent Note**: Do NOT run `pnpm build` from within the AI sandbox - it freezes. Ask the user to run `pnpm build` manually. However, you CAN run `pnpm test` in the examples folder since it imports directly from source.
+**Always run `pnpm lint`, `pnpm test`, and `pnpm knip` before considering a change complete** — the same way linting and testing are required, `knip` must pass (no unused files, dependencies, or exports).
+
+**AI Agent Note**: Do NOT run `pnpm build` from within the AI sandbox - it freezes. Ask the user to run `pnpm build` manually. However, you CAN run `pnpm test` (and `pnpm test:examples`) since they import directly from source.
 
 ## Examples (E2E Tests)
 
