@@ -1957,6 +1957,194 @@ describe("PromptlSpecification", () => {
         expect(secondContent._promptlSourceMap).toBeUndefined();
       });
     });
+
+    describe("compaction and server-side tool parts", () => {
+      it("should convert a server_tool_call to a tool call and record the source type", () => {
+        const messages: GenAIMessage[] = [
+          {
+            role: "assistant",
+            parts: [
+              {
+                type: "server_tool_call",
+                id: "srv_1",
+                name: "web_search",
+                server_tool_call: { type: "web_search", query: "rosetta" },
+              },
+            ],
+          },
+        ];
+
+        const result = PromptlSpecification.fromGenAI({ messages, direction: "output", providerMetadata: "preserve" });
+
+        expect(result.messages).toHaveLength(1);
+        expect(result.messages[0]?.content[0]).toMatchObject({
+          type: "tool-call",
+          toolCallId: "srv_1",
+          toolName: "web_search",
+          args: { type: "web_search", query: "rosetta" },
+          toolArguments: { type: "web_search", query: "rosetta" },
+          // Promptl has no server-side tool concept, so the source type is kept in metadata
+          _providerMetadata: { _knownFields: { originalType: "server_tool_call" } },
+        });
+      });
+
+      it("should convert a server_tool_call_response to a tool result", () => {
+        const messages: GenAIMessage[] = [
+          {
+            role: "assistant",
+            parts: [
+              {
+                type: "server_tool_call",
+                id: "srv_1",
+                name: "web_search",
+                server_tool_call: { type: "web_search", query: "rosetta" },
+              },
+              {
+                type: "server_tool_call_response",
+                id: "srv_1",
+                server_tool_call_response: { type: "web_search_result", results: ["https://example.com"] },
+              },
+            ],
+          },
+        ];
+
+        const result = PromptlSpecification.fromGenAI({ messages, direction: "output", providerMetadata: "preserve" });
+
+        // Tool responses always become separate Promptl tool messages
+        expect(result.messages).toHaveLength(2);
+        expect(result.messages[0]?.role).toBe("assistant");
+        expect(result.messages[1]?.role).toBe("tool");
+        expect(result.messages[1]?.content[0]).toMatchObject({
+          type: "tool-result",
+          toolCallId: "srv_1",
+          // The tool name is resolved from the matching server tool call
+          toolName: "web_search",
+          result: { type: "web_search_result", results: ["https://example.com"] },
+          isError: false,
+          _providerMetadata: { _knownFields: { originalType: "server_tool_call_response" } },
+        });
+      });
+
+      it("should not fall back to the generic part handling for server-side tool parts", () => {
+        const messages: GenAIMessage[] = [
+          {
+            role: "assistant",
+            parts: [
+              { type: "server_tool_call", name: "web_search", server_tool_call: { type: "web_search" } },
+              { type: "server_tool_call_response", server_tool_call_response: { type: "web_search_result" } },
+            ],
+          },
+        ];
+
+        const result = PromptlSpecification.fromGenAI({ messages, direction: "output", providerMetadata: "strip" });
+
+        const types = result.messages.flatMap((message) =>
+          (message.content as { type: string }[]).map((content) => content.type),
+        );
+        expect(types).toEqual(["tool-call", "tool-result"]);
+      });
+
+      it("should preserve compaction parts as message metadata instead of flattening them to text", () => {
+        const messages: GenAIMessage[] = [
+          {
+            role: "assistant",
+            parts: [
+              { type: "compaction", id: "cmp_1", content: "Summary of the earlier turns." },
+              { type: "text", content: "Carrying on." },
+            ],
+          },
+        ];
+
+        const result = PromptlSpecification.fromGenAI({ messages, direction: "output", providerMetadata: "preserve" });
+
+        expect(result.messages).toHaveLength(1);
+        // Promptl cannot represent compaction, so it is not part of the content
+        expect(result.messages[0]?.content).toEqual([{ type: "text", text: "Carrying on." }]);
+        expect(result.messages[0]).toMatchObject({
+          _providerMetadata: {
+            _unsupportedParts: [{ type: "compaction", id: "cmp_1", content: "Summary of the earlier turns." }],
+          },
+        });
+      });
+
+      it("should not add metadata for compaction parts in strip mode", () => {
+        const messages: GenAIMessage[] = [
+          {
+            role: "assistant",
+            parts: [
+              { type: "compaction", id: "cmp_1", content: "Summary" },
+              { type: "text", content: "Carrying on." },
+            ],
+          },
+        ];
+
+        const result = PromptlSpecification.fromGenAI({ messages, direction: "output", providerMetadata: "strip" });
+
+        expect(result.messages).toEqual([{ role: "assistant", content: [{ type: "text", text: "Carrying on." }] }]);
+      });
+
+      it("should keep messages that only contain a compaction part", () => {
+        const messages: GenAIMessage[] = [
+          { role: "assistant", parts: [{ type: "compaction", id: "cmp_1", content: "Summary" }] },
+        ];
+
+        const result = PromptlSpecification.fromGenAI({ messages, direction: "output", providerMetadata: "preserve" });
+
+        expect(result.messages).toHaveLength(1);
+        expect(result.messages[0]?.content).toEqual([]);
+        expect(result.messages[0]).toMatchObject({
+          _providerMetadata: { _unsupportedParts: [{ type: "compaction", id: "cmp_1", content: "Summary" }] },
+        });
+      });
+
+      it("should not spread compaction parts onto the message in passthrough mode", () => {
+        const messages: GenAIMessage[] = [
+          {
+            role: "assistant",
+            parts: [
+              { type: "compaction", id: "cmp_1", content: "Summary" },
+              { type: "text", content: "Carrying on." },
+            ],
+            _provider_metadata: { customField: "value" },
+          },
+        ];
+
+        const result = PromptlSpecification.fromGenAI({
+          messages,
+          direction: "output",
+          providerMetadata: "passthrough",
+        });
+
+        // Passthrough spreads extra fields, but not the internal metadata channels
+        expect(result.messages[0]).toEqual({
+          role: "assistant",
+          content: [{ type: "text", text: "Carrying on." }],
+          customField: "value",
+        });
+      });
+
+      it("should keep existing message metadata when preserving compaction parts", () => {
+        const messages: GenAIMessage[] = [
+          {
+            role: "assistant",
+            parts: [
+              { type: "compaction", id: "cmp_1", content: "Summary" },
+              { type: "text", content: "Carrying on." },
+            ],
+            _provider_metadata: { customField: "value" },
+          },
+        ];
+
+        const result = PromptlSpecification.fromGenAI({ messages, direction: "output", providerMetadata: "preserve" });
+
+        expect(result.messages[0]).toMatchObject({
+          _providerMetadata: {
+            customField: "value",
+            _unsupportedParts: [{ type: "compaction", id: "cmp_1", content: "Summary" }],
+          },
+        });
+      });
+    });
   });
 
   describe("round-trip conversion", () => {

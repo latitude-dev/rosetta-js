@@ -92,6 +92,8 @@ export const VercelAIToolCallPartSchema = z
     toolCallId: z.string(),
     toolName: z.string(),
     input: z.unknown(),
+    /** Whether the tool call was executed by the provider (server-side tools). */
+    providerExecuted: z.boolean().optional(),
   })
   .passthrough();
 export type VercelAIToolCallPart = Infer<typeof VercelAIToolCallPartSchema>;
@@ -206,6 +208,8 @@ export const VercelAIToolResultPartSchema = z
     // Legacy format
     result: z.unknown().optional(),
     isError: z.boolean().optional(),
+    /** Whether the tool call was executed by the provider (server-side tools). */
+    providerExecuted: z.boolean().optional(),
   })
   .passthrough()
   .refine((data) => data.output !== undefined || data.result !== undefined, {

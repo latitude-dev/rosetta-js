@@ -20,6 +20,7 @@ import {
   type ProviderToGenAIArgs,
 } from "$package/providers/provider";
 import {
+  adaptUnsupportedParts,
   applyMetadataMode,
   binaryToBase64,
   coerceToRecord,
@@ -66,11 +67,14 @@ export const PromptlSpecification = {
   },
 
   fromGenAI({ messages, providerMetadata }: ProviderFromGenAIArgs) {
+    // Promptl has no server-side tool or compaction content, so those parts are adapted first
+    const adapted = messages.map(adaptUnsupportedParts);
+
     // Build a lookup map from tool call id to tool name from all tool_call parts
-    const toolCallNameMap = buildToolCallNameMap(messages);
+    const toolCallNameMap = buildToolCallNameMap(adapted);
 
     const converted: PromptlMessage[] = [];
-    for (const message of messages) {
+    for (const message of adapted) {
       converted.push(...genAIMessageToPromptl(message, toolCallNameMap, providerMetadata));
     }
 
@@ -424,7 +428,12 @@ function promptlMessageToGenAI(message: PromptlMessage): GenAIMessage {
   };
 }
 
-/** Converts a GenAI part to Promptl content. */
+/**
+ * Converts a GenAI part to Promptl content.
+ *
+ * Server-side tool and compaction parts never reach this switch: `fromGenAI` runs them through
+ * `adaptUnsupportedParts` first, so they arrive here as their client-side equivalents or not at all.
+ */
 function genAIPartToPromptl(
   part: GenAIPart,
   toolCallNameMap: Map<string, string>,

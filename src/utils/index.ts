@@ -5,6 +5,12 @@
  */
 
 import type { z } from "zod";
+import type {
+  GenAIMessage,
+  GenAIPart,
+  GenAIServerToolCallRequestPart,
+  GenAIServerToolCallResponsePart,
+} from "$package/core/genai";
 
 /**
  * Recursively removes index signatures from a type while preserving known properties.
@@ -130,6 +136,20 @@ export function getPartsMetadata(metadata: Record<string, unknown> | undefined):
 }
 
 /**
+ * Extracts the parts the target provider cannot represent from message metadata, checking both
+ * casings. See {@link adaptUnsupportedParts} for how they get there.
+ *
+ * @param metadata - The message metadata to extract from
+ * @returns The unsupported parts array, or undefined if not present
+ */
+export function getUnsupportedParts(metadata: Record<string, unknown> | undefined): GenAIPart[] | undefined {
+  if (!metadata) return undefined;
+  // biome-ignore lint/complexity/useLiteralKeys: required for index signature access
+  const parts = metadata["_unsupported_parts"] ?? metadata["_unsupportedParts"];
+  return Array.isArray(parts) ? (parts as GenAIPart[]) : undefined;
+}
+
+/**
  * Stores metadata on a GenAI entity, merging with any existing metadata.
  * This is used in toGenAI to build the _provider_metadata field.
  *
@@ -199,13 +219,24 @@ export function applyMetadataMode<T extends object>(
       const metadataKey = useCamelCase ? "_providerMetadata" : "_provider_metadata";
       const knownFieldsKey = useCamelCase ? "_knownFields" : "_known_fields";
       const partsMetadataKey = useCamelCase ? "_partsMetadata" : "_parts_metadata";
+      const unsupportedPartsKey = useCamelCase ? "_unsupportedParts" : "_unsupported_parts";
 
-      // Normalize the known fields and parts metadata keys in the metadata
-      const { _known_fields, _knownFields, _parts_metadata, _partsMetadata, ...rest } = metadata;
+      // Normalize the known fields, parts metadata and unsupported parts keys in the metadata
+      const {
+        _known_fields,
+        _knownFields,
+        _parts_metadata,
+        _partsMetadata,
+        _unsupported_parts,
+        _unsupportedParts,
+        ...rest
+      } = metadata;
       const knownFields = _known_fields ?? _knownFields;
       const partsMetadata = _parts_metadata ?? _partsMetadata;
+      const unsupportedParts = _unsupported_parts ?? _unsupportedParts;
       const hasKnownFields = knownFields && Object.keys(knownFields as object).length > 0;
       const hasPartsMetadata = partsMetadata && Object.keys(partsMetadata as object).length > 0;
+      const hasUnsupportedParts = Array.isArray(unsupportedParts) && unsupportedParts.length > 0;
 
       const normalizedMetadata: Record<string, unknown> = { ...rest };
       if (hasKnownFields) {
@@ -214,6 +245,9 @@ export function applyMetadataMode<T extends object>(
       if (hasPartsMetadata) {
         normalizedMetadata[partsMetadataKey] = partsMetadata;
       }
+      if (hasUnsupportedParts) {
+        normalizedMetadata[unsupportedPartsKey] = unsupportedParts;
+      }
 
       // Only add metadata field if there's something to store
       if (Object.keys(normalizedMetadata).length === 0) return entity;
@@ -221,9 +255,17 @@ export function applyMetadataMode<T extends object>(
     }
 
     case "passthrough": {
-      // Spread all extra fields EXCEPT known fields and parts metadata (either casing)
-      // _partsMetadata should be restored to parts by the provider's fromGenAI, not spread at entity level
-      const { _known_fields, _knownFields, _parts_metadata, _partsMetadata, ...extraFields } = metadata;
+      // Spread all extra fields EXCEPT known fields, parts metadata and unsupported parts (either casing)
+      // These are internal channels read by the provider's fromGenAI, not entity level fields
+      const {
+        _known_fields,
+        _knownFields,
+        _parts_metadata,
+        _partsMetadata,
+        _unsupported_parts,
+        _unsupportedParts,
+        ...extraFields
+      } = metadata;
       // Only spread if there are extra fields to add
       if (Object.keys(extraFields).length === 0) return entity;
       return { ...entity, ...extraFields };
@@ -365,6 +407,92 @@ export function withMetadata<T extends { type: string; _provider_metadata?: Reco
   );
   if (!metadata) return part;
   return { ...part, _provider_metadata: metadata };
+}
+
+/**
+ * Adapts the GenAI parts that a target provider cannot represent, so nothing is silently
+ * dropped or flattened. Meant for targets without a server-side tool or compaction concept
+ * (every target except GenAI itself, which stores all parts natively):
+ *
+ * - `server_tool_call` and `server_tool_call_response` become their client-side equivalents
+ *   (`tool_call` and `tool_call_response`), with the source type recorded in
+ *   `_known_fields.originalType` so the target can still tell the tool ran on the provider.
+ * - `compaction` parts are removed from the content and preserved under the unsupported parts
+ *   metadata key, since no provider format can represent them. `applyMetadataMode` writes it in
+ *   the target's casing (`_unsupportedParts` or `_unsupported_parts`) like any other metadata key.
+ *
+ * Returns the message untouched when it has none of these parts.
+ */
+export function adaptUnsupportedParts(message: GenAIMessage): GenAIMessage {
+  const parts: GenAIPart[] = [];
+  const unsupported: GenAIPart[] = [];
+  let adapted = false;
+
+  for (const part of message.parts) {
+    switch (part.type) {
+      case "server_tool_call": {
+        const { server_tool_call, ...rest } = withoutMetadata(part as GenAIServerToolCallRequestPart);
+        parts.push({
+          ...rest,
+          type: "tool_call",
+          ...(server_tool_call !== undefined ? { arguments: server_tool_call } : {}),
+          ...retypeMetadata(part),
+        });
+        adapted = true;
+        break;
+      }
+
+      case "server_tool_call_response": {
+        const { server_tool_call_response, ...rest } = withoutMetadata(part as GenAIServerToolCallResponsePart);
+        parts.push({
+          ...rest,
+          type: "tool_call_response",
+          ...(server_tool_call_response !== undefined ? { response: server_tool_call_response } : {}),
+          ...retypeMetadata(part),
+        });
+        adapted = true;
+        break;
+      }
+
+      case "compaction":
+        unsupported.push(part);
+        break;
+
+      default:
+        parts.push(part);
+    }
+  }
+
+  if (!adapted && unsupported.length === 0) return message;
+  if (unsupported.length === 0) return { ...message, parts };
+
+  // Drop both casings of the key before writing it back, so the metadata never holds two copies.
+  // Any previously preserved parts are kept, and applyMetadataMode picks the target's casing.
+  const existingMetadata = readMetadata(message as unknown as Obj);
+  const previous = getUnsupportedParts(existingMetadata) ?? [];
+  const { _unsupported_parts, _unsupportedParts, ...extraMetadata } = existingMetadata ?? {};
+  const metadata = { ...extraMetadata, _unsupportedParts: [...previous, ...unsupported] };
+  const baseMessage = withoutMetadata(message);
+
+  return { ...baseMessage, parts, _provider_metadata: metadata };
+}
+
+/**
+ * Strips both metadata casings from an entity, so only one is written back.
+ * Still a `T`: the metadata fields are optional on every entity that has them.
+ */
+function withoutMetadata<T extends object>(entity: T): T {
+  const { _provider_metadata, _providerMetadata, ...rest } = entity as T & {
+    _provider_metadata?: unknown;
+    _providerMetadata?: unknown;
+  };
+  return rest as T;
+}
+
+/** Builds the metadata of a part being converted to another GenAI type, recording the source type. */
+function retypeMetadata(part: GenAIPart): { _provider_metadata?: Record<string, unknown> } {
+  const metadata = storeMetadata(readMetadata(part as unknown as Obj), {}, { originalType: part.type });
+  return metadata ? { _provider_metadata: metadata } : {};
 }
 
 /**

@@ -2065,6 +2065,166 @@ describe("VercelAISpecification", () => {
         expect(content[0]?._providerMetadata?._knownFields?.originalType).toBe("reasoning-file");
       });
     });
+
+    describe("compaction and server-side tool parts", () => {
+      it("should convert a server_tool_call to a provider-executed tool call", () => {
+        const messages: GenAIMessage[] = [
+          {
+            role: "assistant",
+            parts: [
+              {
+                type: "server_tool_call",
+                id: "srv_1",
+                name: "web_search",
+                server_tool_call: { type: "web_search", query: "rosetta" },
+              },
+            ],
+          },
+        ];
+
+        const result = VercelAISpecification.fromGenAI({ messages, direction: "output", providerMetadata: "strip" });
+
+        expect(result.messages).toHaveLength(1);
+        expect((result.messages[0] as { content: unknown[] }).content[0]).toEqual({
+          type: "tool-call",
+          toolCallId: "srv_1",
+          toolName: "web_search",
+          input: { type: "web_search", query: "rosetta" },
+          // The Vercel AI SDK models server-side tools with providerExecuted
+          providerExecuted: true,
+        });
+      });
+
+      it("should convert a server_tool_call_response to a provider-executed tool result", () => {
+        const messages: GenAIMessage[] = [
+          {
+            role: "assistant",
+            parts: [
+              {
+                type: "server_tool_call",
+                id: "srv_1",
+                name: "web_search",
+                server_tool_call: { type: "web_search", query: "rosetta" },
+              },
+              {
+                type: "server_tool_call_response",
+                id: "srv_1",
+                server_tool_call_response: { type: "web_search_result", results: ["https://example.com"] },
+              },
+            ],
+          },
+        ];
+
+        const result = VercelAISpecification.fromGenAI({ messages, direction: "output", providerMetadata: "strip" });
+
+        // Provider-executed results stay in the assistant message
+        expect(result.messages).toHaveLength(1);
+        expect((result.messages[0] as { content: unknown[] }).content[1]).toEqual({
+          type: "tool-result",
+          toolCallId: "srv_1",
+          // The tool name is resolved from the matching server tool call
+          toolName: "web_search",
+          output: { type: "json", value: { type: "web_search_result", results: ["https://example.com"] } },
+          providerExecuted: true,
+        });
+      });
+
+      it("should record the source type in metadata for server-side tool parts", () => {
+        const messages: GenAIMessage[] = [
+          {
+            role: "assistant",
+            parts: [
+              { type: "server_tool_call", id: "srv_1", name: "web_search", server_tool_call: { type: "web_search" } },
+            ],
+          },
+        ];
+
+        const result = VercelAISpecification.fromGenAI({ messages, direction: "output", providerMetadata: "preserve" });
+
+        expect((result.messages[0] as { content: unknown[] }).content[0]).toMatchObject({
+          type: "tool-call",
+          _providerMetadata: { _knownFields: { originalType: "server_tool_call" } },
+        });
+      });
+
+      it("should not flag regular tool calls as provider-executed", () => {
+        const messages: GenAIMessage[] = [
+          {
+            role: "assistant",
+            parts: [{ type: "tool_call", id: "call_1", name: "get_weather", arguments: { city: "Paris" } }],
+          },
+        ];
+
+        const result = VercelAISpecification.fromGenAI({ messages, direction: "output", providerMetadata: "strip" });
+
+        expect((result.messages[0] as { content: unknown[] }).content[0]).toEqual({
+          type: "tool-call",
+          toolCallId: "call_1",
+          toolName: "get_weather",
+          input: { city: "Paris" },
+        });
+      });
+
+      it("should preserve compaction parts as message metadata instead of flattening them to text", () => {
+        const messages: GenAIMessage[] = [
+          {
+            role: "assistant",
+            parts: [
+              { type: "compaction", id: "cmp_1", content: "Summary of the earlier turns." },
+              { type: "text", content: "Carrying on." },
+            ],
+          },
+        ];
+
+        const result = VercelAISpecification.fromGenAI({ messages, direction: "output", providerMetadata: "preserve" });
+
+        expect(result.messages).toHaveLength(1);
+        // The Vercel AI SDK cannot represent compaction, so it is not part of the content
+        // (a lone text part still collapses to string content)
+        expect((result.messages[0] as { content: unknown }).content).toBe("Carrying on.");
+        expect(result.messages[0]).toMatchObject({
+          _providerMetadata: {
+            _unsupportedParts: [{ type: "compaction", id: "cmp_1", content: "Summary of the earlier turns." }],
+          },
+        });
+      });
+
+      it("should not add metadata for compaction parts in strip mode", () => {
+        const messages: GenAIMessage[] = [
+          {
+            role: "assistant",
+            parts: [
+              { type: "compaction", id: "cmp_1", content: "Summary" },
+              { type: "text", content: "Carrying on." },
+            ],
+          },
+        ];
+
+        const result = VercelAISpecification.fromGenAI({ messages, direction: "output", providerMetadata: "strip" });
+
+        expect(result.messages).toEqual([{ role: "assistant", content: "Carrying on." }]);
+      });
+
+      it("should keep compaction parts out of system message content", () => {
+        const messages: GenAIMessage[] = [
+          {
+            role: "system",
+            parts: [
+              { type: "text", content: "Be helpful." },
+              { type: "compaction", id: "cmp_1", content: "Summary" },
+            ],
+          },
+        ];
+
+        const result = VercelAISpecification.fromGenAI({ messages, direction: "output", providerMetadata: "preserve" });
+
+        expect(result.messages[0]).toMatchObject({
+          role: "system",
+          content: "Be helpful.",
+          _providerMetadata: { _unsupportedParts: [{ type: "compaction", id: "cmp_1", content: "Summary" }] },
+        });
+      });
+    });
   });
 
   describe("round-trip conversion", () => {

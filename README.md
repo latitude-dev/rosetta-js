@@ -2,7 +2,7 @@
 
 The translation layer for LLM provider messages.
 
-Rosetta converts messages between different LLM providers using [**GenAI**](https://opentelemetry.io/docs/specs/semconv/registry/attributes/gen-ai/), a standardized intermediate format. Just pass in messages from any provider—OpenAI, Anthropic, Google, or even custom formats—and get consistent output. No manual mapping required.
+Rosetta converts messages between different LLM providers using [**GenAI**](https://github.com/open-telemetry/semantic-conventions-genai/tree/main/model/gen-ai), a standardized intermediate format. Just pass in messages from any provider—OpenAI, Anthropic, Google, or even custom formats—and get consistent output. No manual mapping required.
 
 > Rosetta was made by [Latitude](https://latitude.so?utm_source=github&utm_medium=oss&utm_campaign=rosetta_ai) as an effort to standardize the observability layer for any LLM application!
 
@@ -201,10 +201,10 @@ const { messages } = translate(openAIWithToolCall, {
 });
 
 // Tool call part
-messages[0].parts[0]; // { type: "tool_call", name: "get_weather", arguments: { location: "Paris" }, ... }
+messages[0].parts[0]; // { type: "tool_call", id: "call_abc123", name: "get_weather", arguments: { location: "Paris" }, ... }
 
-// Tool response part  
-messages[1].parts[0]; // { type: "tool_call_response", call_id: "call_abc123", content: {...}, ... }
+// Tool response part
+messages[1].parts[0]; // { type: "tool_call_response", id: "call_abc123", response: {...}, ... }
 ```
 
 ### Translate multimodal content
@@ -294,7 +294,7 @@ More providers will be added. See [AGENTS.md](./AGENTS.md) for contribution guid
 
 ## GenAI Format
 
-GenAI is the intermediate format used for translation, inspired by the [OpenTelemetry GenAI semantic conventions](https://opentelemetry.io/docs/specs/semconv/registry/attributes/gen-ai/). It provides a unified representation of LLM messages across all providers:
+GenAI is the intermediate format used for translation, and it tracks the [OpenTelemetry GenAI message schemas](https://github.com/open-telemetry/semantic-conventions-genai/tree/main/model/gen-ai). A single schema covers both input and output messages, so `finish_reason` is optional (it only applies to output messages). It provides a unified representation of LLM messages across all providers:
 
 ```typescript
 import type { GenAIMessage, GenAISystem } from "rosetta-ai";
@@ -306,13 +306,21 @@ const message: GenAIMessage = {
     { type: "uri", uri: "https://example.com/cat.jpg", modality: "image" },
   ],
   name: "Alice",          // Optional: participant name
-  finish_reason: "stop",  // Optional: why the model stopped
+  finish_reason: "stop",  // Optional (output messages only): why the model stopped
 };
 
 const system: GenAISystem = [
   { type: "text", content: "You are a helpful assistant." },
 ];
 ```
+
+Roles, modalities and finish reasons accept the named values below, plus any other string for provider-specific values:
+
+| Field | Named values |
+|-------|--------------|
+| `role` | `system`, `user`, `assistant`, `tool` |
+| `modality` | `image`, `video`, `audio`, `document` |
+| `finish_reason` | `stop`, `length`, `content_filter`, `tool_call`, `compaction`, `error` |
 
 ### Part Types
 
@@ -323,9 +331,37 @@ const system: GenAISystem = [
 | `file` | File reference by ID | `file_id`, `modality` |
 | `uri` | URL reference | `uri`, `modality` |
 | `reasoning` | Model thinking/reasoning | `content` |
-| `tool_call` | Tool/function call request | `call_id`, `name`, `arguments` |
-| `tool_call_response` | Tool/function result | `call_id`, `content` |
-| `generic` | Custom/extensible type | `content`, any additional fields |
+| `tool_call` | Tool/function call request | `id`, `name`, `arguments` |
+| `tool_call_response` | Tool/function result | `id`, `response` |
+| `server_tool_call` | Provider-executed tool call (e.g. web search) | `id`, `name`, `server_tool_call` |
+| `server_tool_call_response` | Provider-executed tool result | `id`, `server_tool_call_response` |
+| `compaction` | Compacted conversation state | `id`, `content` |
+| `generic` | Custom/extensible type | `type`, any additional fields |
+
+Unknown part types are always accepted as generic parts, so messages using parts that Rosetta doesn't model yet still translate.
+
+### Unsupported Parts
+
+GenAI covers more part types than any single provider format, so some parts cannot be translated as-is. Rosetta never flattens them into text and never drops them silently. Instead, each target applies one of three outcomes:
+
+| Outcome | What happens | Example |
+|---------|--------------|---------|
+| **Mapped** | Converted to the closest part the target supports, with the source type kept in the known fields as `originalType` | `server_tool_call` becomes a `tool-call` (with `providerExecuted: true` on Vercel AI) |
+| **Preserved** | Moved out of the content and into the unsupported parts metadata field | `compaction`, which no provider format can represent |
+| **Kept** | Stored as-is, no conversion needed | Every part, when the target is GenAI |
+
+Preserved parts live under `_unsupportedParts` (or `_unsupported_parts`, following the target's casing) and behave like every other metadata field, so the [metadata mode](#provider-metadata-mode) decides whether they survive:
+
+```typescript
+const { messages } = translate(genAIMessages, { to: Provider.Promptl });
+
+messages[0]._providerMetadata._unsupportedParts;
+// [{ type: "compaction", id: "cmp_1", content: "Summary of the earlier turns." }]
+```
+
+**Important**: as with `_partsMetadata`, only **preserve** mode keeps unsupported parts. They are an internal channel, so **passthrough** does not spread them onto the output message, and **strip** removes them.
+
+Translating to GenAI is always lossless: every part is kept, whatever its type.
 
 ### Provider Metadata
 
@@ -333,6 +369,8 @@ All GenAI entities support `_provider_metadata` to preserve extra fields during 
 
 1. **`_known_fields`**: Cross-provider semantic data (`toolName`, `isError`, `isRefusal`, `originalType`) used to build accurate translations
 2. **Extra fields**: Provider-specific data preserved for round-trips
+
+Rosetta also uses two reserved fields internally: `_partsMetadata` (see below) and `_unsupportedParts` (see [Unsupported Parts](#unsupported-parts)). Every reserved field is written in the target's casing (`_known_fields` vs `_knownFields`, `_unsupported_parts` vs `_unsupportedParts`, ...) and read in either, so messages stay translatable no matter which provider produced them.
 
 ```typescript
 const message: GenAIMessage = {

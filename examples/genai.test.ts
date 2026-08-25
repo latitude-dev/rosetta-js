@@ -186,6 +186,80 @@ describe("GenAI E2E", () => {
     });
   });
 
+  describe("compaction and server-side tool parts", () => {
+    const messages: GenAIMessage[] = [
+      {
+        role: "user",
+        parts: [
+          { type: "compaction", id: "cmp_1", content: "Summary of the earlier turns." },
+          { type: "text", content: "Search for the latest release." },
+        ],
+      },
+      {
+        role: "assistant",
+        parts: [
+          {
+            type: "server_tool_call",
+            id: "srv_1",
+            name: "web_search",
+            server_tool_call: { type: "web_search", query: "rosetta latest release" },
+          },
+          {
+            type: "server_tool_call_response",
+            id: "srv_1",
+            server_tool_call_response: { type: "web_search_result", results: [{ url: "https://example.com" }] },
+          },
+          { type: "text", content: "The latest release is 2.3.0." },
+        ],
+        finish_reason: "compaction",
+      },
+    ];
+
+    it("should survive a GenAI to GenAI translation", () => {
+      const result = translate(messages, { from: Provider.GenAI, to: Provider.GenAI });
+
+      expect(result.messages).toEqual(messages);
+    });
+
+    it("should map server-side tool parts to Promptl tool content", () => {
+      const result = translate(messages, { from: Provider.GenAI, to: Provider.Promptl });
+
+      // The compaction part cannot be represented, the server tool call becomes a tool call, and
+      // the server tool response becomes a separate Promptl tool message
+      expect(result.messages.map((message) => message.role)).toEqual(["user", "assistant", "tool"]);
+      expect(result.messages[1]?.content[0] as { type: string; toolName: string }).toMatchObject({
+        type: "tool-call",
+        toolName: "web_search",
+      });
+      expect(result.messages[2]?.content[0] as { type: string; toolName: string }).toMatchObject({
+        type: "tool-result",
+        toolName: "web_search",
+      });
+    });
+
+    it("should map server-side tool parts to provider-executed Vercel AI parts", () => {
+      const result = translate(messages, { from: Provider.GenAI, to: Provider.VercelAI });
+
+      const assistantContent = result.messages[1]?.content as { type: string; providerExecuted?: boolean }[];
+      expect(assistantContent.map((part) => part.type)).toEqual(["tool-call", "tool-result", "text"]);
+      expect(assistantContent[0]?.providerExecuted).toBe(true);
+      expect(assistantContent[1]?.providerExecuted).toBe(true);
+    });
+
+    it("should preserve compaction parts in target metadata instead of as text", () => {
+      const result = translate(messages, { from: Provider.GenAI, to: Provider.Promptl });
+
+      const userMessage = result.messages[0] as {
+        content: { type: string }[];
+        _providerMetadata?: { _unsupportedParts?: unknown[] };
+      };
+      expect(userMessage.content.map((content) => content.type)).toEqual(["text"]);
+      expect(userMessage._providerMetadata?._unsupportedParts).toEqual([
+        { type: "compaction", id: "cmp_1", content: "Summary of the earlier turns." },
+      ]);
+    });
+  });
+
   describe("round-trip translations", () => {
     it("should round-trip GenAI → Promptl → GenAI", () => {
       const original: GenAIMessage[] = [

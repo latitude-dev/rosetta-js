@@ -40,10 +40,17 @@ export const PartsMetadataSchema = z
   .passthrough();
 
 /**
+ * Schema for parts the target provider cannot represent, kept on the message metadata.
+ * Entries are GenAI parts, only validated on their `type` to stay forward compatible.
+ */
+export const UnsupportedPartsSchema = z.array(z.object({ type: z.string() }).passthrough());
+
+/**
  * Provider metadata schema for preserving provider-specific data.
  * This is a flat structure with:
  * - `_known_fields`: Internal fields used for building correct translations
  * - `_parts_metadata`: Collapsed part-level metadata (when target uses string content)
+ * - `_unsupported_parts`: Parts the target provider cannot represent
  * - All other fields: Extra data from the source provider, passed through
  *
  * The metadata is stored at `_provider_metadata` on GenAI entities.
@@ -60,6 +67,10 @@ export const ProviderMetadataSchema = z
     _parts_metadata: PartsMetadataSchema.optional(),
     /** Also check camelCase version (from VercelAI/Promptl targets) */
     _partsMetadata: PartsMetadataSchema.optional(),
+    /** Parts the target provider cannot represent (when target lacks the part type) */
+    _unsupported_parts: UnsupportedPartsSchema.optional(),
+    /** Also check camelCase version (from VercelAI/Promptl targets) */
+    _unsupportedParts: UnsupportedPartsSchema.optional(),
   })
   .passthrough();
 
@@ -68,11 +79,11 @@ export const GenAIRoleSchema = z.enum(["system", "user", "assistant", "tool"]);
 export type GenAIRole = z.infer<typeof GenAIRoleSchema>;
 
 /** General modality of attached data. */
-export const GenAIModalitySchema = z.enum(["image", "video", "audio"]);
+export const GenAIModalitySchema = z.enum(["image", "video", "audio", "document"]);
 export type GenAIModality = z.infer<typeof GenAIModalitySchema>;
 
-/** Reason for finishing the generation (for output messages). */
-export const GenAIFinishReasonSchema = z.enum(["stop", "length", "content_filter", "tool_call", "error"]);
+/** Reason for finishing the generation (only present on output messages). */
+export const GenAIFinishReasonSchema = z.enum(["stop", "length", "content_filter", "tool_call", "compaction", "error"]);
 export type GenAIFinishReason = z.infer<typeof GenAIFinishReasonSchema>;
 
 /** Represents text content sent to or received from the model. */
@@ -154,6 +165,65 @@ export const GenAIToolCallResponsePartSchema = z
   .passthrough();
 export type GenAIToolCallResponsePart = z.infer<typeof GenAIToolCallResponsePartSchema>;
 
+/**
+ * Polymorphic server tool call/response details, discriminated by `type`.
+ *
+ * Mirrors the `GenericServerToolCall` and `GenericServerToolCallResponse` shapes of the GenAI
+ * schema: the structure varies per provider tool (e.g. `web_search`, `code_interpreter`), so only
+ * the `type` discriminator is known and everything else is preserved as-is.
+ */
+export const GenAIServerToolDetailsSchema = z
+  .object({
+    type: z.string(),
+  })
+  .passthrough();
+export type GenAIServerToolDetails = z.infer<typeof GenAIServerToolDetailsSchema>;
+
+/**
+ * Represents a server-side tool call requested by the model, executed by the provider
+ * instead of the client.
+ *
+ * `server_tool_call` is optional (required in the GenAI schema) so partially instrumented calls
+ * are still recognized as server tool calls instead of falling back to a generic part.
+ */
+export const GenAIServerToolCallRequestPartSchema = z
+  .object({
+    type: z.literal("server_tool_call"),
+    id: z.string().nullable().optional(),
+    name: z.string(),
+    server_tool_call: GenAIServerToolDetailsSchema.optional(),
+    _provider_metadata: ProviderMetadataSchema.optional(),
+  })
+  .passthrough();
+export type GenAIServerToolCallRequestPart = z.infer<typeof GenAIServerToolCallRequestPartSchema>;
+
+/**
+ * Represents the outcome of a server-side tool call, executed by the model provider.
+ *
+ * `server_tool_call_response` is optional (required in the GenAI schema) for the same reason as
+ * `server_tool_call` on {@link GenAIServerToolCallRequestPartSchema}.
+ */
+export const GenAIServerToolCallResponsePartSchema = z
+  .object({
+    type: z.literal("server_tool_call_response"),
+    id: z.string().nullable().optional(),
+    server_tool_call_response: GenAIServerToolDetailsSchema.optional(),
+    _provider_metadata: ProviderMetadataSchema.optional(),
+  })
+  .passthrough();
+export type GenAIServerToolCallResponsePart = z.infer<typeof GenAIServerToolCallResponsePartSchema>;
+
+/** Represents compacted conversation state sent to or received from the model. */
+export const GenAICompactionPartSchema = z
+  .object({
+    type: z.literal("compaction"),
+    id: z.string().nullable().optional(),
+    content: z.string().nullable().optional(),
+    _provider_metadata: ProviderMetadataSchema.optional(),
+  })
+  .passthrough();
+export type GenAICompactionPart = z.infer<typeof GenAICompactionPartSchema>;
+
 /** Represents an arbitrary message part with any type and properties. */
 export const GenAIGenericPartSchema = z
   .object({
@@ -172,6 +242,9 @@ export const GenAIPartSchema = z.union([
   GenAIReasoningPartSchema,
   GenAIToolCallRequestPartSchema,
   GenAIToolCallResponsePartSchema,
+  GenAIServerToolCallRequestPartSchema,
+  GenAIServerToolCallResponsePartSchema,
+  GenAICompactionPartSchema,
   GenAIGenericPartSchema,
 ]);
 export type GenAIPart = z.infer<typeof GenAIPartSchema>;

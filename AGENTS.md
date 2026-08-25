@@ -209,10 +209,14 @@ type InputSystem = string | object | object[];
 The GenAI schema is the intermediate format. Key entities:
 
 - **GenAIMessage**: `{ role, parts, name?, finish_reason?, _provider_metadata? }`
-- **GenAIPart**: Discriminated union by `type` field (text, blob, file, uri, reasoning, tool_call, tool_call_response, generic)
+- **GenAIPart**: Discriminated union by `type` field (text, blob, file, uri, reasoning, tool_call, tool_call_response, server_tool_call, server_tool_call_response, compaction, generic)
 - **GenAISystem**: Array of GenAIParts
 
 All entities include optional `_provider_metadata` for preserving provider-specific data during round-trips.
+
+The schema tracks the [OpenTelemetry GenAI message schemas](https://github.com/open-telemetry/semantic-conventions-genai/tree/main/model/gen-ai). It stays a **single** schema for input and output messages: fields that only apply to one direction are optional (e.g. `finish_reason`, which only output messages carry). Never split it into separate input/output schemas or duplicate fields.
+
+When the upstream schema adds a part type, add a first-class schema for it and keep `GenAIGenericPartSchema` as the last member of the union so unknown types still parse.
 
 All GenAI schemas and types are prefixed with "GenAI" (e.g., `GenAIMessageSchema`, `GenAIMessage`, `GenAIPartSchema`, `GenAIPart`) to follow the same naming convention as other providers.
 
@@ -1162,6 +1166,23 @@ When `applyMetadataMode` is called:
 
 **Important**: In passthrough mode, if the target provider doesn't support structured content (like VercelAI system messages), part-level metadata stored in `_partsMetadata` will be lost. Use **preserve** mode if you need to retain this metadata through round-trips.
 
+**6. Parts the Target Provider Cannot Represent:**
+
+Some GenAI parts have no equivalent in any provider format (`compaction`) or only a lossy one (`server_tool_call`, `server_tool_call_response`). Never flatten them into text and never drop them silently. `adaptUnsupportedParts` in `$package/utils` applies the shared policy, and every target except GenAI itself should call it first in `fromGenAI`:
+
+```typescript
+fromGenAI({ messages, providerMetadata }: ProviderFromGenAIArgs) {
+  const adapted = messages.map(adaptUnsupportedParts);
+  // ...build the output from `adapted`, not from `messages`
+}
+```
+
+It rewrites `server_tool_call` and `server_tool_call_response` into `tool_call` and `tool_call_response`, recording the source type in `_known_fields.originalType` so the target can still tell the tool ran on the provider (VercelAI uses this to emit `providerExecuted: true`). It moves `compaction` parts out of the content and into the unsupported parts metadata field, since no provider format can represent them.
+
+Like every reserved metadata field, the unsupported parts field is **written in the target's casing and read in either** (`_unsupported_parts` for GenAI, `_unsupportedParts` for VercelAI/Promptl). `applyMetadataMode` handles the normalization, so `adaptUnsupportedParts` just writes one key and drops both casings first — never leave two copies behind. Use `getUnsupportedParts()` to read the field. It is an internal channel, so like `_partsMetadata` it is normalized in **preserve** mode, stripped in **passthrough** (never spread onto the entity), and removed in **strip**.
+
+Because the parts are adapted up front, the rest of `fromGenAI` (tool name lookups, role splitting, part conversion) needs no special cases.
+
 ### Schema Design Principles
 
 1. **GenAI as the canonical format**: All conversions go through GenAI
@@ -1337,6 +1358,13 @@ The `_provider_metadata` object has two parts:
     _promptlSourceMap: [...],   // Part metadata collapsed to message level
     custom_part_field: "value",
   },
+
+  // Unsupported parts - GenAI parts the target format cannot represent (compaction)
+  // Written by adaptUnsupportedParts, so they are preserved instead of dropped
+  // Read it with getUnsupportedParts() (handles both camelCase and snake_case variants)
+  _unsupportedParts: [
+    { type: "compaction", id: "cmp_1", content: "..." },
+  ],
 
   // Extra fields - provider-specific data for round-trips
   custom_field: "value",
