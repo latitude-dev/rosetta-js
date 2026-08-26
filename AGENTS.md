@@ -1177,11 +1177,10 @@ fromGenAI({ messages, providerMetadata }: ProviderFromGenAIArgs) {
 }
 ```
 
-It rewrites `server_tool_call` and `server_tool_call_response` into `tool_call` and `tool_call_response`, recording the source type in `_known_fields.originalType` so the target can still tell the tool ran on the provider (VercelAI uses this to emit `providerExecuted: true`). It rewrites `compaction` into a `text` part the same way: the summary is the conversation state the model is given in place of the turns it replaced, so it belongs in the content rather than beside it — a target that dropped it would discard the history it stands for.
+**Always map to another part, never to metadata.** Every conversion records the source type in `_known_fields.originalType`, which is the same mechanism `redacted-reasoning` and VercelAI `custom` already use:
 
-**Prefer mapping over preserving.** Only fall back to the unsupported parts metadata field when there is genuinely nothing to map, which for `compaction` means the provider exposed only an encrypted item with no readable summary.
-
-Like every reserved metadata field, the unsupported parts field is **written in the target's casing and read in either** (`_unsupported_parts` for GenAI, `_unsupportedParts` for VercelAI/Promptl). `applyMetadataMode` handles the normalization, so `adaptUnsupportedParts` just writes one key and drops both casings first — never leave two copies behind. Use `getUnsupportedParts()` to read the field. It is an internal channel, so like `_partsMetadata` it is normalized in **preserve** mode, stripped in **passthrough** (never spread onto the entity), and removed in **strip**.
+- `server_tool_call` and `server_tool_call_response` become `tool_call` and `tool_call_response`, so the target can still tell the tool ran on the provider (VercelAI turns this into `providerExecuted: true`).
+- `compaction` becomes a `text` part. The summary is the conversation state the model is given in place of the turns it replaced, so it belongs in the content — a target that moved it aside would discard the history it stands for. An encrypted item with no summary becomes an empty text part, and `filterEmptyGenAIMessages` treats an empty `compaction` like an empty `text` part so such messages can be filtered.
 
 Because the parts are adapted up front, the rest of `fromGenAI` (tool name lookups, role splitting, part conversion) needs no special cases.
 
@@ -1360,13 +1359,6 @@ The `_provider_metadata` object has two parts:
     _promptlSourceMap: [...],   // Part metadata collapsed to message level
     custom_part_field: "value",
   },
-
-  // Unsupported parts - GenAI parts with nothing the target format can carry
-  // Written by adaptUnsupportedParts, so they are preserved instead of dropped
-  // Read it with getUnsupportedParts() (handles both camelCase and snake_case variants)
-  _unsupportedParts: [
-    { type: "compaction", id: "cmp_1" }, // encrypted compaction item, no summary to map
-  ],
 
   // Extra fields - provider-specific data for round-trips
   custom_field: "value",

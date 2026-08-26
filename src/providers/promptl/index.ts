@@ -449,7 +449,8 @@ function genAIPartToPromptl(
     case "text":
       return applyMode({
         type: "text",
-        text: part.content,
+        // Coalesce: a malformed part with no content parses as a generic part
+        text: part.content ?? "",
       } as PromptlContent);
 
     case "blob": {

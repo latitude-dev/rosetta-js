@@ -94,7 +94,7 @@ const { messages, system } = translate(inputMessages, {
 | `system` | `string \| object \| object[]` | - | System instructions (for providers that separate them) |
 | `direction` | `"input" \| "output"` | `"input"` | Affects role interpretation when translating strings |
 | `inferPriority` | `Provider[]` | `DEFAULT_INFER_PRIORITY` | Priority order for provider auto-detection |
-| `filterEmptyMessages` | `boolean` | `false` | Remove empty messages (no parts, or only empty text) during translation |
+| `filterEmptyMessages` | `boolean` | `false` | Remove empty messages (no parts, or only empty text/compaction content) during translation |
 | `providerMetadata` | `"preserve" \| "passthrough" \| "strip"` | `"preserve"` | How to handle provider metadata (extra fields) in translation |
 
 **Returns:** `{ messages, system? }` - translated messages and optional system instructions
@@ -342,26 +342,25 @@ Unknown part types are always accepted as generic parts, so messages using parts
 
 ### Unsupported Parts
 
-GenAI covers more part types than any single provider format, so some parts cannot be translated as-is. Rosetta never drops them silently. Instead, each target applies one of three outcomes:
+GenAI covers more part types than any single provider format. Rosetta never drops the extras silently: every part a target cannot represent is converted to the closest part it can, with the source type recorded in `_knownFields.originalType` so you can still tell what it was.
 
-| Outcome | What happens | Example |
-|---------|--------------|---------|
-| **Kept** | Stored as-is, no conversion needed | Every part, when the target is GenAI |
-| **Mapped** | Converted to the closest part the target supports, with the source type kept in the known fields as `originalType` | `server_tool_call` becomes a `tool-call` (with `providerExecuted: true` on Vercel AI); `compaction` becomes a `text` part |
-| **Preserved** | Moved out of the content and into the unsupported parts metadata field | A `compaction` part with no readable summary, which has no text to carry |
+| Part | GenAI target | Promptl target | Vercel AI target |
+|------|--------------|----------------|------------------|
+| `server_tool_call` | kept as-is | `tool-call` | `tool-call` with `providerExecuted: true` |
+| `server_tool_call_response` | kept as-is | `tool-result` | `tool-result` with `providerExecuted: true` |
+| `compaction` | kept as-is | `text` part | `text` part |
 
-Compaction is mapped rather than preserved because the summary is conversation content: the model is given it in place of the turns it replaced, so dropping it from a translated prompt would discard the whole history it stands for. It arrives as a `text` part carrying `originalType: "compaction"`, so you can still tell it apart from what the model actually said.
-
-When a provider only exposes an encrypted compaction item, there is no summary to carry. Those parts are preserved under `_unsupportedParts` (or `_unsupported_parts`, following the target's casing) and behave like every other metadata field, so the [metadata mode](#provider-metadata-mode) decides whether they survive:
+Compaction becomes text because the summary is conversation content: the model is given it in place of the turns it replaced, so dropping it from a translated prompt would discard the whole history it stands for.
 
 ```typescript
 const { messages } = translate(genAIMessages, { to: Provider.Promptl });
 
-messages[0]._providerMetadata._unsupportedParts;
-// [{ type: "compaction", id: "cmp_1" }]
+messages[0].content[0];
+// { type: "text", text: "Summary of the earlier turns.",
+//   _providerMetadata: { _knownFields: { originalType: "compaction" } } }
 ```
 
-**Important**: as with `_partsMetadata`, only **preserve** mode keeps unsupported parts. They are an internal channel, so **passthrough** does not spread them onto the output message, and **strip** removes them.
+When a provider only exposes an encrypted compaction item there is no summary to carry, so it becomes an **empty** text part — the compaction stays visible in the conversation, and [`filterEmptyMessages`](#translate) drops the message if that is all it contained.
 
 Translating to GenAI is always lossless: every part is kept, whatever its type.
 
@@ -372,7 +371,7 @@ All GenAI entities support `_provider_metadata` to preserve extra fields during 
 1. **`_known_fields`**: Cross-provider semantic data (`toolName`, `isError`, `isRefusal`, `originalType`) used to build accurate translations
 2. **Extra fields**: Provider-specific data preserved for round-trips
 
-Rosetta also uses two reserved fields internally: `_partsMetadata` (see below) and `_unsupportedParts` (see [Unsupported Parts](#unsupported-parts)). Every reserved field is written in the target's casing (`_known_fields` vs `_knownFields`, `_unsupported_parts` vs `_unsupportedParts`, ...) and read in either, so messages stay translatable no matter which provider produced them.
+Reserved fields are written in the target's casing (`_known_fields` vs `_knownFields`, `_parts_metadata` vs `_partsMetadata`) and read in either, so messages stay translatable no matter which provider produced them.
 
 ```typescript
 const message: GenAIMessage = {

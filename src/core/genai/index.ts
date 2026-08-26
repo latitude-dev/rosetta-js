@@ -40,17 +40,10 @@ export const PartsMetadataSchema = z
   .passthrough();
 
 /**
- * Schema for parts the target provider cannot represent, kept on the message metadata.
- * Entries are GenAI parts, only validated on their `type` to stay forward compatible.
- */
-export const UnsupportedPartsSchema = z.array(z.object({ type: z.string() }).passthrough());
-
-/**
  * Provider metadata schema for preserving provider-specific data.
  * This is a flat structure with:
  * - `_known_fields`: Internal fields used for building correct translations
  * - `_parts_metadata`: Collapsed part-level metadata (when target uses string content)
- * - `_unsupported_parts`: Parts the target provider cannot represent
  * - All other fields: Extra data from the source provider, passed through
  *
  * The metadata is stored at `_provider_metadata` on GenAI entities.
@@ -67,10 +60,6 @@ export const ProviderMetadataSchema = z
     _parts_metadata: PartsMetadataSchema.optional(),
     /** Also check camelCase version (from VercelAI/Promptl targets) */
     _partsMetadata: PartsMetadataSchema.optional(),
-    /** Parts the target provider cannot represent (when target lacks the part type) */
-    _unsupported_parts: UnsupportedPartsSchema.optional(),
-    /** Also check camelCase version (from VercelAI/Promptl targets) */
-    _unsupportedParts: UnsupportedPartsSchema.optional(),
   })
   .passthrough();
 

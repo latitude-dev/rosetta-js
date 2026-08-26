@@ -98,7 +98,10 @@ export type SafeTranslateResult<To extends ProviderTarget> =
  * - It has no parts, OR
  * - All parts are empty text parts (empty or whitespace-only)
  *
- * Messages with any non-text parts (tool_call, reasoning, blob, etc.) are always kept.
+ * Compaction parts count as text: their summary is the conversation state the model is given,
+ * so an encrypted item with no summary is as empty as an empty text part.
+ *
+ * Messages with any other part (tool_call, reasoning, blob, etc.) are always kept.
  */
 function filterEmptyGenAIMessages(messages: GenAIMessage[]): GenAIMessage[] {
   return messages.filter((message) => {
@@ -109,11 +112,11 @@ function filterEmptyGenAIMessages(messages: GenAIMessage[]): GenAIMessage[] {
 
     // Check if all parts are empty text parts
     const allEmptyText = message.parts.every((part) => {
-      if (part.type === "text") {
-        const content = (part as { content: string }).content;
+      if (part.type === "text" || part.type === "compaction") {
+        const content = (part as { content?: string | null }).content;
         return !content || content.trim() === "";
       }
-      // Non-text parts (tool_call, reasoning, blob, etc.) count as non-empty
+      // Other parts (tool_call, reasoning, blob, etc.) count as non-empty
       return false;
     });
 

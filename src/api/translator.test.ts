@@ -802,6 +802,28 @@ describe("edge cases", () => {
   });
 
   describe("filterEmptyMessages option", () => {
+    it("should drop a message whose only part is a compaction with no summary", () => {
+      const messages: GenAIMessage[] = [
+        { role: "user", parts: [{ type: "compaction", id: "cmp_1" }] },
+        { role: "user", parts: [{ type: "text", content: "Keep going." }] },
+      ];
+
+      const result = translate(messages, { from: Provider.GenAI, filterEmptyMessages: true });
+
+      expect(result.messages).toHaveLength(1);
+      expect(result.messages[0]?.parts[0]).toEqual({ type: "text", content: "Keep going." });
+    });
+
+    it("should keep a message whose compaction part carries a summary", () => {
+      const messages: GenAIMessage[] = [
+        { role: "user", parts: [{ type: "compaction", id: "cmp_1", content: "Summary" }] },
+      ];
+
+      const result = translate(messages, { from: Provider.GenAI, filterEmptyMessages: true });
+
+      expect(result.messages).toHaveLength(1);
+    });
+
     it("should NOT filter empty messages by default", () => {
       const messages: GenAIMessage[] = [
         { role: "user", parts: [{ type: "text", content: "Hello" }] },

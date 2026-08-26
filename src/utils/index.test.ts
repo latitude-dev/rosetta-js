@@ -4,7 +4,7 @@
 
 import { describe, expect, it } from "vitest";
 import type { GenAIMessage } from "$package/core/genai";
-import { adaptUnsupportedParts, binaryToBase64, getUnsupportedParts, inferModality } from "$package/utils";
+import { adaptUnsupportedParts, binaryToBase64, inferModality } from "$package/utils";
 
 describe("binaryToBase64", () => {
   it("should convert a small Uint8Array to base64", () => {
@@ -252,95 +252,42 @@ describe("adaptUnsupportedParts", () => {
     });
   });
 
-  it("should move a compaction part with no readable summary into the message metadata", () => {
+  it("should convert a compaction part with no readable summary to an empty text part", () => {
+    // Providers may only expose an encrypted compaction item, leaving no summary to carry
+    const message = {
+      role: "assistant",
+      parts: [
+        { type: "compaction", id: "cmp_1" },
+        { type: "compaction", id: "cmp_2", content: null },
+      ],
+    } as unknown as GenAIMessage;
+
+    expect(adaptUnsupportedParts(message).parts).toEqual([
+      {
+        type: "text",
+        id: "cmp_1",
+        content: "",
+        _provider_metadata: { _known_fields: { originalType: "compaction" } },
+      },
+      {
+        type: "text",
+        id: "cmp_2",
+        content: "",
+        _provider_metadata: { _known_fields: { originalType: "compaction" } },
+      },
+    ]);
+  });
+
+  it("should never write message metadata", () => {
     const message: GenAIMessage = {
       role: "assistant",
-      parts: [
-        { type: "compaction", id: "cmp_1" },
-        { type: "text", content: "Hello" },
-      ],
+      parts: [{ type: "compaction", id: "cmp_1" }],
+      _provider_metadata: { customField: "value" },
     };
 
-    expect(adaptUnsupportedParts(message)).toEqual({
-      role: "assistant",
-      parts: [{ type: "text", content: "Hello" }],
-      _provider_metadata: { _unsupportedParts: [{ type: "compaction", id: "cmp_1" }] },
-    });
-  });
-
-  it("should treat an empty or null compaction summary as having no summary", () => {
-    const message = {
-      role: "assistant",
-      parts: [
-        { type: "compaction", id: "cmp_1", content: "" },
-        { type: "compaction", id: "cmp_2", content: null },
-      ],
-    } as unknown as GenAIMessage;
-
     const adapted = adaptUnsupportedParts(message);
 
-    expect(adapted.parts).toEqual([]);
-    expect(adapted._provider_metadata).toEqual({
-      _unsupportedParts: [
-        { type: "compaction", id: "cmp_1", content: "" },
-        { type: "compaction", id: "cmp_2", content: null },
-      ],
-    });
-  });
-
-  it("should merge with unsupported parts already stored under the other casing", () => {
-    const message = {
-      role: "assistant",
-      parts: [{ type: "compaction", id: "cmp_2" }],
-      _provider_metadata: { _unsupported_parts: [{ type: "compaction", id: "cmp_1" }] },
-    } as unknown as GenAIMessage;
-
-    const adapted = adaptUnsupportedParts(message);
-
-    // A single key holds both, so the metadata never ends up with two copies
-    expect(adapted._provider_metadata).toEqual({
-      _unsupportedParts: [
-        { type: "compaction", id: "cmp_1" },
-        { type: "compaction", id: "cmp_2" },
-      ],
-    });
-  });
-
-  it("should replace a camelCase metadata key instead of writing both casings", () => {
-    const message = {
-      role: "assistant",
-      parts: [{ type: "compaction", id: "cmp_1" }],
-      _providerMetadata: { customField: "value" },
-    } as unknown as GenAIMessage;
-
-    const adapted = adaptUnsupportedParts(message);
-
-    expect(adapted).not.toHaveProperty("_providerMetadata");
-    expect(adapted).toMatchObject({
-      _provider_metadata: { customField: "value", _unsupportedParts: [{ type: "compaction", id: "cmp_1" }] },
-    });
-  });
-});
-
-describe("getUnsupportedParts", () => {
-  it("should read the snake_case key", () => {
-    const parts = [{ type: "compaction", id: "cmp_1" }];
-
-    expect(getUnsupportedParts({ _unsupported_parts: parts })).toEqual(parts);
-  });
-
-  it("should read the camelCase key", () => {
-    const parts = [{ type: "compaction", id: "cmp_1" }];
-
-    expect(getUnsupportedParts({ _unsupportedParts: parts })).toEqual(parts);
-  });
-
-  it("should return undefined when the metadata has no unsupported parts", () => {
-    expect(getUnsupportedParts(undefined)).toBeUndefined();
-    expect(getUnsupportedParts({ customField: "value" })).toBeUndefined();
-  });
-
-  it("should return undefined when the value is not an array", () => {
-    expect(getUnsupportedParts({ _unsupportedParts: "not an array" })).toBeUndefined();
+    // Every part maps to something, so the message metadata is left exactly as it was
+    expect(adapted._provider_metadata).toEqual({ customField: "value" });
   });
 });

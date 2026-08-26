@@ -408,51 +408,6 @@ describe("GenAISpecification", () => {
       expect(fromResult?.messages).toEqual(withMetadata);
     });
 
-    it("should normalize camelCase unsupported parts metadata to snake_case", () => {
-      // A message that came back from a camelCase target (Promptl, VercelAI) carries
-      // _unsupportedParts, which GenAI rewrites with its own casing
-      const messages: GenAIMessage[] = [
-        {
-          role: "assistant",
-          parts: [{ type: "text", content: "Carrying on." }],
-          _provider_metadata: { _unsupportedParts: [{ type: "compaction", id: "cmp_1" }] },
-        },
-      ];
-
-      const result = GenAISpecification.fromGenAI?.({
-        messages,
-        direction: "output",
-        providerMetadata: "preserve",
-      });
-
-      expect(result?.messages[0]?._provider_metadata).toEqual({
-        _unsupported_parts: [{ type: "compaction", id: "cmp_1" }],
-      });
-    });
-
-    it("should not spread unsupported parts metadata onto the message in passthrough mode", () => {
-      const messages: GenAIMessage[] = [
-        {
-          role: "assistant",
-          parts: [{ type: "text", content: "Carrying on." }],
-          _provider_metadata: { _unsupported_parts: [{ type: "compaction", id: "cmp_1" }], customField: "value" },
-        },
-      ];
-
-      const result = GenAISpecification.fromGenAI?.({
-        messages,
-        direction: "output",
-        providerMetadata: "passthrough",
-      });
-
-      // Like _known_fields and _parts_metadata, it is an internal channel and never spread
-      expect(result?.messages[0]).toEqual({
-        role: "assistant",
-        parts: [{ type: "text", content: "Carrying on." }],
-        customField: "value",
-      });
-    });
-
     it("should keep compaction parts in system instructions", () => {
       const toResult = GenAISpecification.toGenAI({
         messages: "Hello",

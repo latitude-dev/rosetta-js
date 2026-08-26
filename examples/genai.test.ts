@@ -257,7 +257,7 @@ describe("GenAI E2E", () => {
       ]);
     });
 
-    it("should preserve an encrypted compaction part in target metadata", () => {
+    it("should convert an encrypted compaction part to an empty text part", () => {
       const encrypted: GenAIMessage[] = [
         {
           role: "user",
@@ -270,13 +270,27 @@ describe("GenAI E2E", () => {
 
       const result = translate(encrypted, { from: Provider.GenAI, to: Provider.Promptl });
 
-      const userMessage = result.messages[0] as {
-        content: { type: string }[];
-        _providerMetadata?: { _unsupportedParts?: unknown[] };
-      };
-      // No readable summary to carry, so the part itself is kept instead of being dropped
-      expect(userMessage.content.map((content) => content.type)).toEqual(["text"]);
-      expect(userMessage._providerMetadata?._unsupportedParts).toEqual([{ type: "compaction", id: "cmp_1" }]);
+      // No summary to carry, but the compaction stays visible in the conversation
+      expect(result.messages[0]?.content).toMatchObject([
+        { type: "text", text: "" },
+        { type: "text", text: "Keep going." },
+      ]);
+    });
+
+    it("should let filterEmptyMessages drop a message that is only an encrypted compaction", () => {
+      const encrypted: GenAIMessage[] = [
+        { role: "user", parts: [{ type: "compaction", id: "cmp_1" }] },
+        { role: "user", parts: [{ type: "text", content: "Keep going." }] },
+      ];
+
+      const result = translate(encrypted, {
+        from: Provider.GenAI,
+        to: Provider.Promptl,
+        filterEmptyMessages: true,
+      });
+
+      expect(result.messages).toHaveLength(1);
+      expect(result.messages[0]?.content).toMatchObject([{ type: "text", text: "Keep going." }]);
     });
   });
 

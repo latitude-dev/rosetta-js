@@ -556,7 +556,9 @@ function genAIPartToVercelAI(
     case "text":
       return applyMode({
         type: "text",
-        text: part.content,
+        // Coalesce: a malformed part with no content parses as a generic part, and the Vercel AI
+        // SDK requires `text` (an undefined one would collapse to a message with no content)
+        text: part.content ?? "",
       } as VercelAIPart);
 
     case "blob": {

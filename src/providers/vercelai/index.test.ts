@@ -5,7 +5,7 @@
 import { describe, expect, it } from "vitest";
 import type { GenAIMessage } from "$package/core/genai";
 import { VercelAISpecification } from "$package/providers/vercelai";
-import type { VercelAIMessage } from "$package/providers/vercelai/schema";
+import { type VercelAIMessage, VercelAIMessageSchema } from "$package/providers/vercelai/schema";
 
 describe("VercelAISpecification", () => {
   describe("toGenAI", () => {
@@ -2067,6 +2067,17 @@ describe("VercelAISpecification", () => {
     });
 
     describe("compaction and server-side tool parts", () => {
+      it("should emit empty text for a malformed text part with no content", () => {
+        // A part with no content parses as a generic part; without the coalesce the message
+        // would collapse to `content: undefined`, which the Vercel AI SDK rejects
+        const messages = [{ role: "user", parts: [{ type: "text" }] }] as unknown as GenAIMessage[];
+
+        const result = VercelAISpecification.fromGenAI({ messages, direction: "output", providerMetadata: "strip" });
+
+        expect(result.messages[0]).toEqual({ role: "user", content: "" });
+        expect(VercelAIMessageSchema.safeParse(result.messages[0]).success).toBe(true);
+      });
+
       it("should convert a server_tool_call to a provider-executed tool call", () => {
         const messages: GenAIMessage[] = [
           {
@@ -2232,8 +2243,8 @@ describe("VercelAISpecification", () => {
         expect(result.messages[0]).toEqual({ role: "system", content: "Be helpful.\nSummary" });
       });
 
-      it("should preserve a compaction part with no readable summary as message metadata", () => {
-        // Providers may only expose an encrypted compaction item, leaving no text to carry
+      it("should convert a compaction part with no readable summary to an empty text part", () => {
+        // Providers may only expose an encrypted compaction item, leaving no summary to carry
         const messages: GenAIMessage[] = [
           {
             role: "assistant",
@@ -2246,12 +2257,12 @@ describe("VercelAISpecification", () => {
 
         const result = VercelAISpecification.fromGenAI({ messages, direction: "output", providerMetadata: "preserve" });
 
-        expect(result.messages).toHaveLength(1);
-        // A lone text part still collapses to string content
-        expect((result.messages[0] as { content: unknown }).content).toBe("Carrying on.");
-        expect(result.messages[0]).toMatchObject({
-          _providerMetadata: { _unsupportedParts: [{ type: "compaction", id: "cmp_1" }] },
-        });
+        expect((result.messages[0] as { content: unknown[] }).content).toEqual([
+          { type: "text", text: "", _providerMetadata: { _knownFields: { originalType: "compaction" } } },
+          { type: "text", text: "Carrying on." },
+        ]);
+        // Nothing is parked on the message: every part maps to content
+        expect(result.messages[0]).not.toHaveProperty("_providerMetadata");
       });
     });
   });
