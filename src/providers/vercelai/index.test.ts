@@ -5,7 +5,7 @@
 import { describe, expect, it } from "vitest";
 import type { GenAIMessage } from "$package/core/genai";
 import { VercelAISpecification } from "$package/providers/vercelai";
-import type { VercelAIMessage } from "$package/providers/vercelai/schema";
+import { type VercelAIMessage, VercelAIMessageSchema } from "$package/providers/vercelai/schema";
 
 describe("VercelAISpecification", () => {
   describe("toGenAI", () => {
@@ -2063,6 +2063,206 @@ describe("VercelAISpecification", () => {
         expect(content[0]?.data).toBe("cmVhc29u");
         // originalType is retained in metadata for potential round-trips
         expect(content[0]?._providerMetadata?._knownFields?.originalType).toBe("reasoning-file");
+      });
+    });
+
+    describe("compaction and server-side tool parts", () => {
+      it("should emit empty text for a malformed text part with no content", () => {
+        // A part with no content parses as a generic part; without the coalesce the message
+        // would collapse to `content: undefined`, which the Vercel AI SDK rejects
+        const messages = [{ role: "user", parts: [{ type: "text" }] }] as unknown as GenAIMessage[];
+
+        const result = VercelAISpecification.fromGenAI({ messages, direction: "output", providerMetadata: "strip" });
+
+        expect(result.messages[0]).toEqual({ role: "user", content: "" });
+        expect(VercelAIMessageSchema.safeParse(result.messages[0]).success).toBe(true);
+      });
+
+      it("should convert a server_tool_call to a provider-executed tool call", () => {
+        const messages: GenAIMessage[] = [
+          {
+            role: "assistant",
+            parts: [
+              {
+                type: "server_tool_call",
+                id: "srv_1",
+                name: "web_search",
+                server_tool_call: { type: "web_search", query: "rosetta" },
+              },
+            ],
+          },
+        ];
+
+        const result = VercelAISpecification.fromGenAI({ messages, direction: "output", providerMetadata: "strip" });
+
+        expect(result.messages).toHaveLength(1);
+        expect((result.messages[0] as { content: unknown[] }).content[0]).toEqual({
+          type: "tool-call",
+          toolCallId: "srv_1",
+          toolName: "web_search",
+          input: { type: "web_search", query: "rosetta" },
+          // The Vercel AI SDK models server-side tools with providerExecuted
+          providerExecuted: true,
+        });
+      });
+
+      it("should convert a server_tool_call_response to a provider-executed tool result", () => {
+        const messages: GenAIMessage[] = [
+          {
+            role: "assistant",
+            parts: [
+              {
+                type: "server_tool_call",
+                id: "srv_1",
+                name: "web_search",
+                server_tool_call: { type: "web_search", query: "rosetta" },
+              },
+              {
+                type: "server_tool_call_response",
+                id: "srv_1",
+                server_tool_call_response: { type: "web_search_result", results: ["https://example.com"] },
+              },
+            ],
+          },
+        ];
+
+        const result = VercelAISpecification.fromGenAI({ messages, direction: "output", providerMetadata: "strip" });
+
+        // Provider-executed results stay in the assistant message
+        expect(result.messages).toHaveLength(1);
+        expect((result.messages[0] as { content: unknown[] }).content[1]).toEqual({
+          type: "tool-result",
+          toolCallId: "srv_1",
+          // The tool name is resolved from the matching server tool call
+          toolName: "web_search",
+          output: { type: "json", value: { type: "web_search_result", results: ["https://example.com"] } },
+          providerExecuted: true,
+        });
+      });
+
+      it("should record the source type in metadata for server-side tool parts", () => {
+        const messages: GenAIMessage[] = [
+          {
+            role: "assistant",
+            parts: [
+              { type: "server_tool_call", id: "srv_1", name: "web_search", server_tool_call: { type: "web_search" } },
+            ],
+          },
+        ];
+
+        const result = VercelAISpecification.fromGenAI({ messages, direction: "output", providerMetadata: "preserve" });
+
+        expect((result.messages[0] as { content: unknown[] }).content[0]).toMatchObject({
+          type: "tool-call",
+          _providerMetadata: { _knownFields: { originalType: "server_tool_call" } },
+        });
+      });
+
+      it("should not flag regular tool calls as provider-executed", () => {
+        const messages: GenAIMessage[] = [
+          {
+            role: "assistant",
+            parts: [{ type: "tool_call", id: "call_1", name: "get_weather", arguments: { city: "Paris" } }],
+          },
+        ];
+
+        const result = VercelAISpecification.fromGenAI({ messages, direction: "output", providerMetadata: "strip" });
+
+        expect((result.messages[0] as { content: unknown[] }).content[0]).toEqual({
+          type: "tool-call",
+          toolCallId: "call_1",
+          toolName: "get_weather",
+          input: { city: "Paris" },
+        });
+      });
+
+      it("should convert a compaction summary to text content", () => {
+        const messages: GenAIMessage[] = [
+          {
+            role: "assistant",
+            parts: [
+              { type: "compaction", id: "cmp_1", content: "Summary of the earlier turns." },
+              { type: "text", content: "Carrying on." },
+            ],
+          },
+        ];
+
+        const result = VercelAISpecification.fromGenAI({ messages, direction: "output", providerMetadata: "preserve" });
+
+        expect(result.messages).toHaveLength(1);
+        // The summary is the conversation state the model is given, so it belongs in the content
+        expect((result.messages[0] as { content: unknown[] }).content).toEqual([
+          {
+            type: "text",
+            text: "Summary of the earlier turns.",
+            _providerMetadata: { _knownFields: { originalType: "compaction" } },
+          },
+          { type: "text", text: "Carrying on." },
+        ]);
+        expect(result.messages[0]).not.toHaveProperty("_providerMetadata");
+      });
+
+      it("should keep the compaction summary in strip mode", () => {
+        const messages: GenAIMessage[] = [
+          {
+            role: "assistant",
+            parts: [
+              { type: "compaction", id: "cmp_1", content: "Summary" },
+              { type: "text", content: "Carrying on." },
+            ],
+          },
+        ];
+
+        const result = VercelAISpecification.fromGenAI({ messages, direction: "output", providerMetadata: "strip" });
+
+        expect(result.messages).toEqual([
+          {
+            role: "assistant",
+            content: [
+              { type: "text", text: "Summary" },
+              { type: "text", text: "Carrying on." },
+            ],
+          },
+        ]);
+      });
+
+      it("should fold a compaction summary into system message content", () => {
+        // System messages require string content, so the summary is joined with the other text
+        const messages: GenAIMessage[] = [
+          {
+            role: "system",
+            parts: [
+              { type: "text", content: "Be helpful." },
+              { type: "compaction", id: "cmp_1", content: "Summary" },
+            ],
+          },
+        ];
+
+        const result = VercelAISpecification.fromGenAI({ messages, direction: "output", providerMetadata: "strip" });
+
+        expect(result.messages[0]).toEqual({ role: "system", content: "Be helpful.\nSummary" });
+      });
+
+      it("should convert a compaction part with no readable summary to an empty text part", () => {
+        // Providers may only expose an encrypted compaction item, leaving no summary to carry
+        const messages: GenAIMessage[] = [
+          {
+            role: "assistant",
+            parts: [
+              { type: "compaction", id: "cmp_1" },
+              { type: "text", content: "Carrying on." },
+            ],
+          },
+        ];
+
+        const result = VercelAISpecification.fromGenAI({ messages, direction: "output", providerMetadata: "preserve" });
+
+        expect((result.messages[0] as { content: unknown[] }).content).toEqual([
+          { type: "text", text: "", _providerMetadata: { _knownFields: { originalType: "compaction" } } },
+          { type: "text", text: "Carrying on." },
+        ]);
+        // Nothing is parked on the message: every part maps to content
+        expect(result.messages[0]).not.toHaveProperty("_providerMetadata");
       });
     });
   });

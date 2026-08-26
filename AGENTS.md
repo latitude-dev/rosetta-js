@@ -209,10 +209,14 @@ type InputSystem = string | object | object[];
 The GenAI schema is the intermediate format. Key entities:
 
 - **GenAIMessage**: `{ role, parts, name?, finish_reason?, _provider_metadata? }`
-- **GenAIPart**: Discriminated union by `type` field (text, blob, file, uri, reasoning, tool_call, tool_call_response, generic)
+- **GenAIPart**: Discriminated union by `type` field (text, blob, file, uri, reasoning, tool_call, tool_call_response, server_tool_call, server_tool_call_response, compaction, generic)
 - **GenAISystem**: Array of GenAIParts
 
 All entities include optional `_provider_metadata` for preserving provider-specific data during round-trips.
+
+The schema tracks the [OpenTelemetry GenAI message schemas](https://github.com/open-telemetry/semantic-conventions-genai/tree/main/model/gen-ai). It stays a **single** schema for input and output messages: fields that only apply to one direction are optional (e.g. `finish_reason`, which only output messages carry). Never split it into separate input/output schemas or duplicate fields.
+
+When the upstream schema adds a part type, add a first-class schema for it and keep `GenAIGenericPartSchema` as the last member of the union so unknown types still parse.
 
 All GenAI schemas and types are prefixed with "GenAI" (e.g., `GenAIMessageSchema`, `GenAIMessage`, `GenAIPartSchema`, `GenAIPart`) to follow the same naming convention as other providers.
 
@@ -1161,6 +1165,24 @@ When `applyMetadataMode` is called:
 - In **strip** mode: All metadata is removed
 
 **Important**: In passthrough mode, if the target provider doesn't support structured content (like VercelAI system messages), part-level metadata stored in `_partsMetadata` will be lost. Use **preserve** mode if you need to retain this metadata through round-trips.
+
+**6. Parts the Target Provider Cannot Represent:**
+
+Some GenAI parts have no direct equivalent in the provider formats (`compaction`, `server_tool_call`, `server_tool_call_response`). Never drop them silently. `adaptUnsupportedParts` in `$package/utils` applies the shared policy, and every target except GenAI itself should call it first in `fromGenAI`:
+
+```typescript
+fromGenAI({ messages, providerMetadata }: ProviderFromGenAIArgs) {
+  const adapted = messages.map(adaptUnsupportedParts);
+  // ...build the output from `adapted`, not from `messages`
+}
+```
+
+**Always map to another part, never to metadata.** Every conversion records the source type in `_known_fields.originalType`, which is the same mechanism `redacted-reasoning` and VercelAI `custom` already use:
+
+- `server_tool_call` and `server_tool_call_response` become `tool_call` and `tool_call_response`, so the target can still tell the tool ran on the provider (VercelAI turns this into `providerExecuted: true`).
+- `compaction` becomes a `text` part. The summary is the conversation state the model is given in place of the turns it replaced, so it belongs in the content — a target that moved it aside would discard the history it stands for. An encrypted item with no summary becomes an empty text part, and `filterEmptyGenAIMessages` treats a blank `compaction` (like a blank `reasoning`) as empty text content so such messages can be filtered.
+
+Because the parts are adapted up front, the rest of `fromGenAI` (tool name lookups, role splitting, part conversion) needs no special cases.
 
 ### Schema Design Principles
 

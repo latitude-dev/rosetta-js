@@ -3,7 +3,8 @@
  */
 
 import { describe, expect, it } from "vitest";
-import { binaryToBase64, inferModality } from "$package/utils";
+import type { GenAIMessage } from "$package/core/genai";
+import { adaptUnsupportedParts, binaryToBase64, inferModality } from "$package/utils";
 
 describe("binaryToBase64", () => {
   it("should convert a small Uint8Array to base64", () => {
@@ -135,5 +136,158 @@ describe("inferModality", () => {
 
   it("should default to document for an unknown top-level segment", () => {
     expect(inferModality("model/gltf-binary")).toBe("document");
+  });
+});
+
+describe("adaptUnsupportedParts", () => {
+  it("should return the same message when it has no unsupported parts", () => {
+    const message: GenAIMessage = {
+      role: "assistant",
+      parts: [
+        { type: "text", content: "Hello" },
+        { type: "tool_call", id: "call_1", name: "get_weather" },
+      ],
+    };
+
+    expect(adaptUnsupportedParts(message)).toBe(message);
+  });
+
+  it("should convert a server_tool_call to a tool_call recording the source type", () => {
+    const message: GenAIMessage = {
+      role: "assistant",
+      parts: [
+        {
+          type: "server_tool_call",
+          id: "srv_1",
+          name: "web_search",
+          server_tool_call: { type: "web_search", query: "rosetta" },
+        },
+      ],
+    };
+
+    expect(adaptUnsupportedParts(message).parts[0]).toEqual({
+      type: "tool_call",
+      id: "srv_1",
+      name: "web_search",
+      arguments: { type: "web_search", query: "rosetta" },
+      _provider_metadata: { _known_fields: { originalType: "server_tool_call" } },
+    });
+  });
+
+  it("should convert a server_tool_call_response to a tool_call_response recording the source type", () => {
+    const message: GenAIMessage = {
+      role: "assistant",
+      parts: [
+        {
+          type: "server_tool_call_response",
+          id: "srv_1",
+          server_tool_call_response: { type: "web_search_result", results: [] },
+        },
+      ],
+    };
+
+    expect(adaptUnsupportedParts(message).parts[0]).toEqual({
+      type: "tool_call_response",
+      id: "srv_1",
+      response: { type: "web_search_result", results: [] },
+      _provider_metadata: { _known_fields: { originalType: "server_tool_call_response" } },
+    });
+  });
+
+  it("should omit the payload fields when the server-side tool details are missing", () => {
+    const message: GenAIMessage = {
+      role: "assistant",
+      parts: [
+        { type: "server_tool_call", name: "web_search" },
+        { type: "server_tool_call_response", id: "srv_1" },
+      ],
+    };
+
+    const parts = adaptUnsupportedParts(message).parts;
+    expect(parts[0]).not.toHaveProperty("arguments");
+    expect(parts[1]).not.toHaveProperty("response");
+  });
+
+  it("should keep existing part metadata when adapting server-side tool parts", () => {
+    const message: GenAIMessage = {
+      role: "assistant",
+      parts: [
+        {
+          type: "server_tool_call",
+          name: "web_search",
+          server_tool_call: { type: "web_search" },
+          _provider_metadata: { customField: "value", _known_fields: { toolName: "web_search" } },
+        },
+      ],
+    };
+
+    expect(adaptUnsupportedParts(message).parts[0]).toMatchObject({
+      _provider_metadata: {
+        customField: "value",
+        _known_fields: { toolName: "web_search", originalType: "server_tool_call" },
+      },
+    });
+  });
+
+  it("should convert a compaction summary to a text part recording the source type", () => {
+    const message: GenAIMessage = {
+      role: "assistant",
+      parts: [
+        { type: "compaction", id: "cmp_1", content: "Summary" },
+        { type: "text", content: "Hello" },
+      ],
+    };
+
+    expect(adaptUnsupportedParts(message)).toEqual({
+      role: "assistant",
+      parts: [
+        {
+          type: "text",
+          id: "cmp_1",
+          content: "Summary",
+          _provider_metadata: { _known_fields: { originalType: "compaction" } },
+        },
+        { type: "text", content: "Hello" },
+      ],
+    });
+  });
+
+  it("should convert a compaction part with no readable summary to an empty text part", () => {
+    // Providers may only expose an encrypted compaction item, leaving no summary to carry
+    const message = {
+      role: "assistant",
+      parts: [
+        { type: "compaction", id: "cmp_1" },
+        { type: "compaction", id: "cmp_2", content: null },
+      ],
+    } as unknown as GenAIMessage;
+
+    expect(adaptUnsupportedParts(message).parts).toEqual([
+      {
+        type: "text",
+        id: "cmp_1",
+        content: "",
+        _provider_metadata: { _known_fields: { originalType: "compaction" } },
+      },
+      {
+        type: "text",
+        id: "cmp_2",
+        content: "",
+        _provider_metadata: { _known_fields: { originalType: "compaction" } },
+      },
+    ]);
+  });
+
+  it("should never write message metadata", () => {
+    const message: GenAIMessage = {
+      role: "assistant",
+      parts: [{ type: "compaction", id: "cmp_1" }],
+      _provider_metadata: { customField: "value" },
+    };
+
+    const adapted = adaptUnsupportedParts(message);
+
+    // Every part maps to something, so the message metadata is left exactly as it was
+    expect(adapted._provider_metadata).toEqual({ customField: "value" });
   });
 });

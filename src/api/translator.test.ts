@@ -618,6 +618,48 @@ describe("cross-provider translation", () => {
   });
 
   describe("round-trip translation", () => {
+    it("should preserve compaction and server-side tool parts through GenAI -> GenAI", () => {
+      const originalMessages: GenAIMessage[] = [
+        {
+          role: "user",
+          parts: [
+            { type: "compaction", id: "cmp_1", content: "Summary of the earlier turns." },
+            { type: "text", content: "Keep going." },
+          ],
+        },
+        {
+          role: "assistant",
+          parts: [
+            {
+              type: "server_tool_call",
+              id: "srv_1",
+              name: "web_search",
+              server_tool_call: { type: "web_search", query: "opentelemetry genai" },
+            },
+            {
+              type: "server_tool_call_response",
+              id: "srv_1",
+              server_tool_call_response: { type: "web_search_result", results: [{ url: "https://example.com" }] },
+            },
+          ],
+          finish_reason: "compaction",
+        },
+      ];
+
+      const result = translate(originalMessages, { from: Provider.GenAI, to: Provider.GenAI });
+
+      expect(result.messages).toEqual(originalMessages);
+    });
+
+    it("should preserve a compaction part with no content through GenAI -> GenAI", () => {
+      // Providers may only report the encrypted compaction item, without a readable summary
+      const originalMessages: GenAIMessage[] = [{ role: "assistant", parts: [{ type: "compaction", id: "cmp_1" }] }];
+
+      const result = translate(originalMessages, { from: Provider.GenAI, to: Provider.GenAI });
+
+      expect(result.messages).toEqual(originalMessages);
+    });
+
     it("should preserve messages through GenAI -> Promptl -> GenAI", () => {
       const originalMessages: GenAIMessage[] = [
         { role: "user", parts: [{ type: "text", content: "Hello" }] },
@@ -760,6 +802,57 @@ describe("edge cases", () => {
   });
 
   describe("filterEmptyMessages option", () => {
+    it("should drop a message whose only part is an empty reasoning block", () => {
+      const messages: GenAIMessage[] = [
+        { role: "assistant", parts: [{ type: "reasoning", content: "   " }] },
+        { role: "assistant", parts: [{ type: "text", content: "Done." }] },
+      ];
+
+      const result = translate(messages, { from: Provider.GenAI, filterEmptyMessages: true });
+
+      expect(result.messages).toHaveLength(1);
+      expect(result.messages[0]?.parts[0]).toEqual({ type: "text", content: "Done." });
+    });
+
+    it("should keep a message whose reasoning block has content", () => {
+      const messages: GenAIMessage[] = [{ role: "assistant", parts: [{ type: "reasoning", content: "Thinking" }] }];
+
+      const result = translate(messages, { from: Provider.GenAI, filterEmptyMessages: true });
+
+      expect(result.messages).toHaveLength(1);
+    });
+
+    it("should keep a message with a non-text part even when its content is empty", () => {
+      // A blob's content is base64 data, not text, so emptiness is not the same question
+      const messages: GenAIMessage[] = [{ role: "user", parts: [{ type: "blob", modality: "image", content: "" }] }];
+
+      const result = translate(messages, { from: Provider.GenAI, filterEmptyMessages: true });
+
+      expect(result.messages).toHaveLength(1);
+    });
+
+    it("should drop a message whose only part is a compaction with no summary", () => {
+      const messages: GenAIMessage[] = [
+        { role: "user", parts: [{ type: "compaction", id: "cmp_1" }] },
+        { role: "user", parts: [{ type: "text", content: "Keep going." }] },
+      ];
+
+      const result = translate(messages, { from: Provider.GenAI, filterEmptyMessages: true });
+
+      expect(result.messages).toHaveLength(1);
+      expect(result.messages[0]?.parts[0]).toEqual({ type: "text", content: "Keep going." });
+    });
+
+    it("should keep a message whose compaction part carries a summary", () => {
+      const messages: GenAIMessage[] = [
+        { role: "user", parts: [{ type: "compaction", id: "cmp_1", content: "Summary" }] },
+      ];
+
+      const result = translate(messages, { from: Provider.GenAI, filterEmptyMessages: true });
+
+      expect(result.messages).toHaveLength(1);
+    });
+
     it("should NOT filter empty messages by default", () => {
       const messages: GenAIMessage[] = [
         { role: "user", parts: [{ type: "text", content: "Hello" }] },

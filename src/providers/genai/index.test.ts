@@ -327,6 +327,99 @@ describe("GenAISpecification", () => {
     });
   });
 
+  describe("compaction and server-side tool parts", () => {
+    const messages: GenAIMessage[] = [
+      {
+        role: "user",
+        parts: [
+          { type: "compaction", id: "cmp_1", content: "Summary of the earlier turns." },
+          { type: "text", content: "Keep going." },
+        ],
+      },
+      {
+        role: "assistant",
+        parts: [
+          {
+            type: "server_tool_call",
+            id: "srv_1",
+            name: "web_search",
+            server_tool_call: { type: "web_search", query: "opentelemetry genai" },
+          },
+          {
+            type: "server_tool_call_response",
+            id: "srv_1",
+            server_tool_call_response: { type: "web_search_result", results: [{ url: "https://example.com" }] },
+          },
+        ],
+        finish_reason: "compaction",
+      },
+    ];
+
+    it("should survive a toGenAI -> fromGenAI round-trip", () => {
+      const toResult = GenAISpecification.toGenAI({ messages, direction: "output" });
+      const fromResult = GenAISpecification.fromGenAI?.({
+        messages: toResult.messages,
+        direction: "output",
+        providerMetadata: "strip",
+      });
+
+      expect(fromResult?.messages).toEqual(messages);
+    });
+
+    it("should survive a round-trip in passthrough mode (used for same-provider translations)", () => {
+      const toResult = GenAISpecification.toGenAI({ messages, direction: "output" });
+      const fromResult = GenAISpecification.fromGenAI?.({
+        messages: toResult.messages,
+        direction: "output",
+        providerMetadata: "passthrough",
+      });
+
+      expect(fromResult?.messages).toEqual(messages);
+    });
+
+    it("should keep part metadata on the new parts through a round-trip", () => {
+      const withMetadata: GenAIMessage[] = [
+        {
+          role: "assistant",
+          parts: [
+            {
+              type: "compaction",
+              id: "cmp_1",
+              content: "Summary",
+              _provider_metadata: { customField: "value" },
+            },
+            {
+              type: "server_tool_call",
+              name: "code_interpreter",
+              server_tool_call: { type: "code_interpreter", code: "1 + 1" },
+              _provider_metadata: { customField: "other" },
+            },
+          ],
+        },
+      ];
+
+      const toResult = GenAISpecification.toGenAI({ messages: withMetadata, direction: "output" });
+      const fromResult = GenAISpecification.fromGenAI?.({
+        messages: toResult.messages,
+        direction: "output",
+        providerMetadata: "preserve",
+      });
+
+      expect(fromResult?.messages).toEqual(withMetadata);
+    });
+
+    it("should keep compaction parts in system instructions", () => {
+      const toResult = GenAISpecification.toGenAI({
+        messages: "Hello",
+        system: [{ type: "compaction", id: "cmp_1", content: "Summary" }],
+        direction: "input",
+      });
+
+      expect(toResult.messages[0]?.role).toBe("system");
+      expect(toResult.messages[0]?.parts[0]).toMatchObject({ type: "compaction", id: "cmp_1" });
+    });
+  });
+
   describe("schema validation", () => {
     it("should have messageSchema defined", () => {
       expect(GenAISpecification.messageSchema).toBeDefined();
@@ -372,6 +465,68 @@ describe("GenAISpecification", () => {
 
       const result = GenAISpecification.messageSchema.safeParse(messageWithCustomPart);
       expect(result.success).toBe(true);
+    });
+
+    it("should parse compaction and server-side tool parts as first-class parts", () => {
+      const message = {
+        role: "assistant",
+        parts: [
+          { type: "compaction", id: "cmp_1", content: "Summary" },
+          { type: "server_tool_call", id: "srv_1", name: "web_search", server_tool_call: { type: "web_search" } },
+          { type: "server_tool_call_response", id: "srv_1", server_tool_call_response: { type: "web_search_result" } },
+        ],
+      };
+
+      const result = GenAISpecification.messageSchema.safeParse(message);
+      expect(result.success).toBe(true);
+      expect(result.data?.parts).toEqual(message.parts);
+    });
+
+    it("should accept partially instrumented server-side tool parts", () => {
+      // The polymorphic details are optional so these stay recognizable as server tool parts
+      const message = {
+        role: "assistant",
+        parts: [
+          { type: "server_tool_call", name: "web_search" },
+          { type: "server_tool_call_response", id: "srv_1" },
+        ],
+      };
+
+      const result = GenAISpecification.messageSchema.safeParse(message);
+      expect(result.success).toBe(true);
+    });
+
+    it("should accept the document modality", () => {
+      const message = {
+        role: "user",
+        parts: [{ type: "blob", modality: "document", mime_type: "application/pdf", content: "JVBERi0=" }],
+      };
+
+      const result = GenAISpecification.messageSchema.safeParse(message);
+      expect(result.success).toBe(true);
+    });
+
+    it("should accept the compaction finish reason", () => {
+      const message = {
+        role: "assistant",
+        parts: [{ type: "text", content: "Compacted" }],
+        finish_reason: "compaction",
+      };
+
+      const result = GenAISpecification.messageSchema.safeParse(message);
+      expect(result.success).toBe(true);
+    });
+
+    it("should accept messages without a finish reason", () => {
+      // finish_reason only applies to output messages, so it stays optional
+      const message = {
+        role: "user",
+        parts: [{ type: "text", content: "Hello" }],
+      };
+
+      const result = GenAISpecification.messageSchema.safeParse(message);
+      expect(result.success).toBe(true);
+      expect(result.data?.finish_reason).toBeUndefined();
     });
 
     it("should accept custom roles via union with z.string()", () => {

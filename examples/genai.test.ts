@@ -186,6 +186,114 @@ describe("GenAI E2E", () => {
     });
   });
 
+  describe("compaction and server-side tool parts", () => {
+    const messages: GenAIMessage[] = [
+      {
+        role: "user",
+        parts: [
+          { type: "compaction", id: "cmp_1", content: "Summary of the earlier turns." },
+          { type: "text", content: "Search for the latest release." },
+        ],
+      },
+      {
+        role: "assistant",
+        parts: [
+          {
+            type: "server_tool_call",
+            id: "srv_1",
+            name: "web_search",
+            server_tool_call: { type: "web_search", query: "rosetta latest release" },
+          },
+          {
+            type: "server_tool_call_response",
+            id: "srv_1",
+            server_tool_call_response: { type: "web_search_result", results: [{ url: "https://example.com" }] },
+          },
+          { type: "text", content: "The latest release is 2.3.0." },
+        ],
+        finish_reason: "compaction",
+      },
+    ];
+
+    it("should survive a GenAI to GenAI translation", () => {
+      const result = translate(messages, { from: Provider.GenAI, to: Provider.GenAI });
+
+      expect(result.messages).toEqual(messages);
+    });
+
+    it("should map server-side tool parts to Promptl tool content", () => {
+      const result = translate(messages, { from: Provider.GenAI, to: Provider.Promptl });
+
+      // The compaction part cannot be represented, the server tool call becomes a tool call, and
+      // the server tool response becomes a separate Promptl tool message
+      expect(result.messages.map((message) => message.role)).toEqual(["user", "assistant", "tool"]);
+      expect(result.messages[1]?.content[0] as { type: string; toolName: string }).toMatchObject({
+        type: "tool-call",
+        toolName: "web_search",
+      });
+      expect(result.messages[2]?.content[0] as { type: string; toolName: string }).toMatchObject({
+        type: "tool-result",
+        toolName: "web_search",
+      });
+    });
+
+    it("should map server-side tool parts to provider-executed Vercel AI parts", () => {
+      const result = translate(messages, { from: Provider.GenAI, to: Provider.VercelAI });
+
+      const assistantContent = result.messages[1]?.content as { type: string; providerExecuted?: boolean }[];
+      expect(assistantContent.map((part) => part.type)).toEqual(["tool-call", "tool-result", "text"]);
+      expect(assistantContent[0]?.providerExecuted).toBe(true);
+      expect(assistantContent[1]?.providerExecuted).toBe(true);
+    });
+
+    it("should carry the compaction summary into the target content", () => {
+      const result = translate(messages, { from: Provider.GenAI, to: Provider.Promptl });
+
+      const userMessage = result.messages[0] as { content: { type: string; text: string }[] };
+      // The summary stands in for the turns it replaced, so it stays part of the prompt
+      expect(userMessage.content).toMatchObject([
+        { type: "text", text: "Summary of the earlier turns." },
+        { type: "text", text: "Search for the latest release." },
+      ]);
+    });
+
+    it("should convert an encrypted compaction part to an empty text part", () => {
+      const encrypted: GenAIMessage[] = [
+        {
+          role: "user",
+          parts: [
+            { type: "compaction", id: "cmp_1" },
+            { type: "text", content: "Keep going." },
+          ],
+        },
+      ];
+
+      const result = translate(encrypted, { from: Provider.GenAI, to: Provider.Promptl });
+
+      // No summary to carry, but the compaction stays visible in the conversation
+      expect(result.messages[0]?.content).toMatchObject([
+        { type: "text", text: "" },
+        { type: "text", text: "Keep going." },
+      ]);
+    });
+
+    it("should let filterEmptyMessages drop a message that is only an encrypted compaction", () => {
+      const encrypted: GenAIMessage[] = [
+        { role: "user", parts: [{ type: "compaction", id: "cmp_1" }] },
+        { role: "user", parts: [{ type: "text", content: "Keep going." }] },
+      ];
+
+      const result = translate(encrypted, {
+        from: Provider.GenAI,
+        to: Provider.Promptl,
+        filterEmptyMessages: true,
+      });
+
+      expect(result.messages).toHaveLength(1);
+      expect(result.messages[0]?.content).toMatchObject([{ type: "text", text: "Keep going." }]);
+    });
+  });
+
   describe("round-trip translations", () => {
     it("should round-trip GenAI → Promptl → GenAI", () => {
       const original: GenAIMessage[] = [

@@ -25,6 +25,7 @@ import {
   type VercelAIUserMessage,
 } from "$package/providers/vercelai/schema";
 import {
+  adaptUnsupportedParts,
   applyMetadataMode,
   binaryToBase64,
   extractExtraFields,
@@ -91,10 +92,13 @@ export const VercelAISpecification = {
   },
 
   fromGenAI({ messages, providerMetadata }: ProviderFromGenAIArgs) {
-    const toolCallNameMap = buildToolCallNameMap(messages);
+    // The Vercel AI SDK has no compaction content, and models server-side tools as regular
+    // tool calls flagged with `providerExecuted`, so those parts are adapted first
+    const adapted = messages.map(adaptUnsupportedParts);
+    const toolCallNameMap = buildToolCallNameMap(adapted);
 
     const converted: VercelAIMessage[] = [];
-    for (const message of messages) {
+    for (const message of adapted) {
       converted.push(...genAIMessageToVercelAI(message, toolCallNameMap, providerMetadata));
     }
 
@@ -531,7 +535,12 @@ function vercelAIMessageToGenAI(message: VercelAIMessage): GenAIMessage {
   };
 }
 
-/** Convert a GenAI part to VercelAI part. */
+/**
+ * Convert a GenAI part to VercelAI part.
+ *
+ * Server-side tool and compaction parts never reach this switch: `fromGenAI` runs them through
+ * `adaptUnsupportedParts` first, so they arrive here as their client-side equivalents or not at all.
+ */
 function genAIPartToVercelAI(
   part: GenAIPart,
   toolCallNameMap: Map<string, string>,
@@ -547,7 +556,9 @@ function genAIPartToVercelAI(
     case "text":
       return applyMode({
         type: "text",
-        text: part.content,
+        // Coalesce: a malformed part with no content parses as a generic part, and the Vercel AI
+        // SDK requires `text` (an undefined one would collapse to a message with no content)
+        text: part.content ?? "",
       } as VercelAIPart);
 
     case "blob": {
@@ -602,6 +613,8 @@ function genAIPartToVercelAI(
         toolCallId: part.id ?? "",
         toolName: part.name,
         input: part.arguments,
+        // Server-side tool calls are regular tool calls flagged as provider-executed
+        ...(known.originalType === "server_tool_call" ? { providerExecuted: true } : {}),
       } as VercelAIPart);
 
     case "tool_call_response": {
@@ -647,6 +660,8 @@ function genAIPartToVercelAI(
         toolCallId: toolId,
         toolName,
         output,
+        // Server-side tool results are regular tool results flagged as provider-executed
+        ...(known.originalType === "server_tool_call_response" ? { providerExecuted: true } : {}),
       };
 
       // For passthrough, exclude outputType since it's internal

@@ -5,6 +5,13 @@
  */
 
 import type { z } from "zod";
+import type {
+  GenAICompactionPart,
+  GenAIMessage,
+  GenAIPart,
+  GenAIServerToolCallRequestPart,
+  GenAIServerToolCallResponsePart,
+} from "$package/core/genai";
 
 /**
  * Recursively removes index signatures from a type while preserving known properties.
@@ -365,6 +372,85 @@ export function withMetadata<T extends { type: string; _provider_metadata?: Reco
   );
   if (!metadata) return part;
   return { ...part, _provider_metadata: metadata };
+}
+
+/**
+ * Adapts the GenAI parts that a target provider cannot represent, so nothing is silently
+ * dropped. Meant for targets without a server-side tool or compaction concept (every target
+ * except GenAI itself, which stores all parts natively). Every conversion records the source
+ * type in `_known_fields.originalType`, so the target can still tell what the part was:
+ *
+ * - `server_tool_call` and `server_tool_call_response` become their client-side equivalents
+ *   (`tool_call` and `tool_call_response`), so the target can still tell the tool ran on the
+ *   provider.
+ * - `compaction` becomes a `text` part: the summary is the conversation state the model is
+ *   given in place of the turns it replaced, so it belongs in the content, not beside it.
+ *   An encrypted item with no readable summary becomes an empty text part, which keeps the
+ *   compaction visible in the conversation (and lets `filterEmptyMessages` drop it).
+ *
+ * Returns the message untouched when it has none of these parts.
+ */
+export function adaptUnsupportedParts(message: GenAIMessage): GenAIMessage {
+  const parts: GenAIPart[] = [];
+  let adapted = false;
+
+  for (const part of message.parts) {
+    switch (part.type) {
+      case "server_tool_call": {
+        const { server_tool_call, ...rest } = withoutMetadata(part as GenAIServerToolCallRequestPart);
+        parts.push({
+          ...rest,
+          type: "tool_call",
+          ...(server_tool_call !== undefined ? { arguments: server_tool_call } : {}),
+          ...retypeMetadata(part),
+        });
+        adapted = true;
+        break;
+      }
+
+      case "server_tool_call_response": {
+        const { server_tool_call_response, ...rest } = withoutMetadata(part as GenAIServerToolCallResponsePart);
+        parts.push({
+          ...rest,
+          type: "tool_call_response",
+          ...(server_tool_call_response !== undefined ? { response: server_tool_call_response } : {}),
+          ...retypeMetadata(part),
+        });
+        adapted = true;
+        break;
+      }
+
+      case "compaction": {
+        const { content, ...rest } = withoutMetadata(part as GenAICompactionPart);
+        parts.push({ ...rest, type: "text", content: content ?? "", ...retypeMetadata(part) });
+        adapted = true;
+        break;
+      }
+
+      default:
+        parts.push(part);
+    }
+  }
+
+  return adapted ? { ...message, parts } : message;
+}
+
+/**
+ * Strips both metadata casings from an entity, so only one is written back.
+ * Still a `T`: the metadata fields are optional on every entity that has them.
+ */
+function withoutMetadata<T extends object>(entity: T): T {
+  const { _provider_metadata, _providerMetadata, ...rest } = entity as T & {
+    _provider_metadata?: unknown;
+    _providerMetadata?: unknown;
+  };
+  return rest as T;
+}
+
+/** Builds the metadata of a part being converted to another GenAI type, recording the source type. */
+function retypeMetadata(part: GenAIPart): { _provider_metadata?: Record<string, unknown> } {
+  const metadata = storeMetadata(readMetadata(part as unknown as Obj), {}, { originalType: part.type });
+  return metadata ? { _provider_metadata: metadata } : {};
 }
 
 /**
