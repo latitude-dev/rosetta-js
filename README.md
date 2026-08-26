@@ -342,21 +342,23 @@ Unknown part types are always accepted as generic parts, so messages using parts
 
 ### Unsupported Parts
 
-GenAI covers more part types than any single provider format, so some parts cannot be translated as-is. Rosetta never flattens them into text and never drops them silently. Instead, each target applies one of three outcomes:
+GenAI covers more part types than any single provider format, so some parts cannot be translated as-is. Rosetta never drops them silently. Instead, each target applies one of three outcomes:
 
 | Outcome | What happens | Example |
 |---------|--------------|---------|
-| **Mapped** | Converted to the closest part the target supports, with the source type kept in the known fields as `originalType` | `server_tool_call` becomes a `tool-call` (with `providerExecuted: true` on Vercel AI) |
-| **Preserved** | Moved out of the content and into the unsupported parts metadata field | `compaction`, which no provider format can represent |
 | **Kept** | Stored as-is, no conversion needed | Every part, when the target is GenAI |
+| **Mapped** | Converted to the closest part the target supports, with the source type kept in the known fields as `originalType` | `server_tool_call` becomes a `tool-call` (with `providerExecuted: true` on Vercel AI); `compaction` becomes a `text` part |
+| **Preserved** | Moved out of the content and into the unsupported parts metadata field | A `compaction` part with no readable summary, which has no text to carry |
 
-Preserved parts live under `_unsupportedParts` (or `_unsupported_parts`, following the target's casing) and behave like every other metadata field, so the [metadata mode](#provider-metadata-mode) decides whether they survive:
+Compaction is mapped rather than preserved because the summary is conversation content: the model is given it in place of the turns it replaced, so dropping it from a translated prompt would discard the whole history it stands for. It arrives as a `text` part carrying `originalType: "compaction"`, so you can still tell it apart from what the model actually said.
+
+When a provider only exposes an encrypted compaction item, there is no summary to carry. Those parts are preserved under `_unsupportedParts` (or `_unsupported_parts`, following the target's casing) and behave like every other metadata field, so the [metadata mode](#provider-metadata-mode) decides whether they survive:
 
 ```typescript
 const { messages } = translate(genAIMessages, { to: Provider.Promptl });
 
 messages[0]._providerMetadata._unsupportedParts;
-// [{ type: "compaction", id: "cmp_1", content: "Summary of the earlier turns." }]
+// [{ type: "compaction", id: "cmp_1" }]
 ```
 
 **Important**: as with `_partsMetadata`, only **preserve** mode keeps unsupported parts. They are an internal channel, so **passthrough** does not spread them onto the output message, and **strip** removes them.

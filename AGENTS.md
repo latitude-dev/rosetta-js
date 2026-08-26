@@ -1168,7 +1168,7 @@ When `applyMetadataMode` is called:
 
 **6. Parts the Target Provider Cannot Represent:**
 
-Some GenAI parts have no equivalent in any provider format (`compaction`) or only a lossy one (`server_tool_call`, `server_tool_call_response`). Never flatten them into text and never drop them silently. `adaptUnsupportedParts` in `$package/utils` applies the shared policy, and every target except GenAI itself should call it first in `fromGenAI`:
+Some GenAI parts have no direct equivalent in the provider formats (`compaction`, `server_tool_call`, `server_tool_call_response`). Never drop them silently. `adaptUnsupportedParts` in `$package/utils` applies the shared policy, and every target except GenAI itself should call it first in `fromGenAI`:
 
 ```typescript
 fromGenAI({ messages, providerMetadata }: ProviderFromGenAIArgs) {
@@ -1177,7 +1177,9 @@ fromGenAI({ messages, providerMetadata }: ProviderFromGenAIArgs) {
 }
 ```
 
-It rewrites `server_tool_call` and `server_tool_call_response` into `tool_call` and `tool_call_response`, recording the source type in `_known_fields.originalType` so the target can still tell the tool ran on the provider (VercelAI uses this to emit `providerExecuted: true`). It moves `compaction` parts out of the content and into the unsupported parts metadata field, since no provider format can represent them.
+It rewrites `server_tool_call` and `server_tool_call_response` into `tool_call` and `tool_call_response`, recording the source type in `_known_fields.originalType` so the target can still tell the tool ran on the provider (VercelAI uses this to emit `providerExecuted: true`). It rewrites `compaction` into a `text` part the same way: the summary is the conversation state the model is given in place of the turns it replaced, so it belongs in the content rather than beside it — a target that dropped it would discard the history it stands for.
+
+**Prefer mapping over preserving.** Only fall back to the unsupported parts metadata field when there is genuinely nothing to map, which for `compaction` means the provider exposed only an encrypted item with no readable summary.
 
 Like every reserved metadata field, the unsupported parts field is **written in the target's casing and read in either** (`_unsupported_parts` for GenAI, `_unsupportedParts` for VercelAI/Promptl). `applyMetadataMode` handles the normalization, so `adaptUnsupportedParts` just writes one key and drops both casings first — never leave two copies behind. Use `getUnsupportedParts()` to read the field. It is an internal channel, so like `_partsMetadata` it is normalized in **preserve** mode, stripped in **passthrough** (never spread onto the entity), and removed in **strip**.
 
@@ -1359,11 +1361,11 @@ The `_provider_metadata` object has two parts:
     custom_part_field: "value",
   },
 
-  // Unsupported parts - GenAI parts the target format cannot represent (compaction)
+  // Unsupported parts - GenAI parts with nothing the target format can carry
   // Written by adaptUnsupportedParts, so they are preserved instead of dropped
   // Read it with getUnsupportedParts() (handles both camelCase and snake_case variants)
   _unsupportedParts: [
-    { type: "compaction", id: "cmp_1", content: "..." },
+    { type: "compaction", id: "cmp_1" }, // encrypted compaction item, no summary to map
   ],
 
   // Extra fields - provider-specific data for round-trips

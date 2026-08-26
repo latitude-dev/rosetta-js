@@ -2044,7 +2044,7 @@ describe("PromptlSpecification", () => {
         expect(types).toEqual(["tool-call", "tool-result"]);
       });
 
-      it("should preserve compaction parts as message metadata instead of flattening them to text", () => {
+      it("should convert a compaction summary to text content", () => {
         const messages: GenAIMessage[] = [
           {
             role: "assistant",
@@ -2058,16 +2058,19 @@ describe("PromptlSpecification", () => {
         const result = PromptlSpecification.fromGenAI({ messages, direction: "output", providerMetadata: "preserve" });
 
         expect(result.messages).toHaveLength(1);
-        // Promptl cannot represent compaction, so it is not part of the content
-        expect(result.messages[0]?.content).toEqual([{ type: "text", text: "Carrying on." }]);
-        expect(result.messages[0]).toMatchObject({
-          _providerMetadata: {
-            _unsupportedParts: [{ type: "compaction", id: "cmp_1", content: "Summary of the earlier turns." }],
+        // The summary is the conversation state the model is given, so it belongs in the content
+        expect(result.messages[0]?.content).toEqual([
+          {
+            type: "text",
+            text: "Summary of the earlier turns.",
+            _providerMetadata: { _knownFields: { originalType: "compaction" } },
           },
-        });
+          { type: "text", text: "Carrying on." },
+        ]);
+        expect(result.messages[0]).not.toHaveProperty("_providerMetadata");
       });
 
-      it("should not add metadata for compaction parts in strip mode", () => {
+      it("should keep the compaction summary in strip mode", () => {
         const messages: GenAIMessage[] = [
           {
             role: "assistant",
@@ -2080,29 +2083,55 @@ describe("PromptlSpecification", () => {
 
         const result = PromptlSpecification.fromGenAI({ messages, direction: "output", providerMetadata: "strip" });
 
-        expect(result.messages).toEqual([{ role: "assistant", content: [{ type: "text", text: "Carrying on." }] }]);
+        expect(result.messages).toEqual([
+          {
+            role: "assistant",
+            content: [
+              { type: "text", text: "Summary" },
+              { type: "text", text: "Carrying on." },
+            ],
+          },
+        ]);
       });
 
-      it("should keep messages that only contain a compaction part", () => {
+      it("should preserve a compaction part with no readable summary as message metadata", () => {
+        // Providers may only expose an encrypted compaction item, leaving no text to carry
         const messages: GenAIMessage[] = [
-          { role: "assistant", parts: [{ type: "compaction", id: "cmp_1", content: "Summary" }] },
+          {
+            role: "assistant",
+            parts: [
+              { type: "compaction", id: "cmp_1" },
+              { type: "text", content: "Carrying on." },
+            ],
+          },
         ];
 
         const result = PromptlSpecification.fromGenAI({ messages, direction: "output", providerMetadata: "preserve" });
 
         expect(result.messages).toHaveLength(1);
-        expect(result.messages[0]?.content).toEqual([]);
+        expect(result.messages[0]?.content).toEqual([{ type: "text", text: "Carrying on." }]);
         expect(result.messages[0]).toMatchObject({
-          _providerMetadata: { _unsupportedParts: [{ type: "compaction", id: "cmp_1", content: "Summary" }] },
+          _providerMetadata: { _unsupportedParts: [{ type: "compaction", id: "cmp_1" }] },
         });
       });
 
-      it("should not spread compaction parts onto the message in passthrough mode", () => {
+      it("should preserve a compaction part with an empty summary as message metadata", () => {
+        const messages: GenAIMessage[] = [{ role: "assistant", parts: [{ type: "compaction", content: "" }] }];
+
+        const result = PromptlSpecification.fromGenAI({ messages, direction: "output", providerMetadata: "preserve" });
+
+        expect(result.messages[0]?.content).toEqual([]);
+        expect(result.messages[0]).toMatchObject({
+          _providerMetadata: { _unsupportedParts: [{ type: "compaction", content: "" }] },
+        });
+      });
+
+      it("should not spread preserved compaction parts onto the message in passthrough mode", () => {
         const messages: GenAIMessage[] = [
           {
             role: "assistant",
             parts: [
-              { type: "compaction", id: "cmp_1", content: "Summary" },
+              { type: "compaction", id: "cmp_1" },
               { type: "text", content: "Carrying on." },
             ],
             _provider_metadata: { customField: "value" },
@@ -2128,7 +2157,7 @@ describe("PromptlSpecification", () => {
           {
             role: "assistant",
             parts: [
-              { type: "compaction", id: "cmp_1", content: "Summary" },
+              { type: "compaction", id: "cmp_1" },
               { type: "text", content: "Carrying on." },
             ],
             _provider_metadata: { customField: "value" },
@@ -2140,7 +2169,7 @@ describe("PromptlSpecification", () => {
         expect(result.messages[0]).toMatchObject({
           _providerMetadata: {
             customField: "value",
-            _unsupportedParts: [{ type: "compaction", id: "cmp_1", content: "Summary" }],
+            _unsupportedParts: [{ type: "compaction", id: "cmp_1" }],
           },
         });
       });

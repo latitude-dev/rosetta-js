@@ -246,17 +246,37 @@ describe("GenAI E2E", () => {
       expect(assistantContent[1]?.providerExecuted).toBe(true);
     });
 
-    it("should preserve compaction parts in target metadata instead of as text", () => {
+    it("should carry the compaction summary into the target content", () => {
       const result = translate(messages, { from: Provider.GenAI, to: Provider.Promptl });
+
+      const userMessage = result.messages[0] as { content: { type: string; text: string }[] };
+      // The summary stands in for the turns it replaced, so it stays part of the prompt
+      expect(userMessage.content).toMatchObject([
+        { type: "text", text: "Summary of the earlier turns." },
+        { type: "text", text: "Search for the latest release." },
+      ]);
+    });
+
+    it("should preserve an encrypted compaction part in target metadata", () => {
+      const encrypted: GenAIMessage[] = [
+        {
+          role: "user",
+          parts: [
+            { type: "compaction", id: "cmp_1" },
+            { type: "text", content: "Keep going." },
+          ],
+        },
+      ];
+
+      const result = translate(encrypted, { from: Provider.GenAI, to: Provider.Promptl });
 
       const userMessage = result.messages[0] as {
         content: { type: string }[];
         _providerMetadata?: { _unsupportedParts?: unknown[] };
       };
+      // No readable summary to carry, so the part itself is kept instead of being dropped
       expect(userMessage.content.map((content) => content.type)).toEqual(["text"]);
-      expect(userMessage._providerMetadata?._unsupportedParts).toEqual([
-        { type: "compaction", id: "cmp_1", content: "Summary of the earlier turns." },
-      ]);
+      expect(userMessage._providerMetadata?._unsupportedParts).toEqual([{ type: "compaction", id: "cmp_1" }]);
     });
   });
 

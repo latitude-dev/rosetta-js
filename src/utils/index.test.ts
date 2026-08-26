@@ -229,7 +229,7 @@ describe("adaptUnsupportedParts", () => {
     });
   });
 
-  it("should move compaction parts into the message metadata", () => {
+  it("should convert a compaction summary to a text part recording the source type", () => {
     const message: GenAIMessage = {
       role: "assistant",
       parts: [
@@ -240,8 +240,51 @@ describe("adaptUnsupportedParts", () => {
 
     expect(adaptUnsupportedParts(message)).toEqual({
       role: "assistant",
+      parts: [
+        {
+          type: "text",
+          id: "cmp_1",
+          content: "Summary",
+          _provider_metadata: { _known_fields: { originalType: "compaction" } },
+        },
+        { type: "text", content: "Hello" },
+      ],
+    });
+  });
+
+  it("should move a compaction part with no readable summary into the message metadata", () => {
+    const message: GenAIMessage = {
+      role: "assistant",
+      parts: [
+        { type: "compaction", id: "cmp_1" },
+        { type: "text", content: "Hello" },
+      ],
+    };
+
+    expect(adaptUnsupportedParts(message)).toEqual({
+      role: "assistant",
       parts: [{ type: "text", content: "Hello" }],
-      _provider_metadata: { _unsupportedParts: [{ type: "compaction", id: "cmp_1", content: "Summary" }] },
+      _provider_metadata: { _unsupportedParts: [{ type: "compaction", id: "cmp_1" }] },
+    });
+  });
+
+  it("should treat an empty or null compaction summary as having no summary", () => {
+    const message = {
+      role: "assistant",
+      parts: [
+        { type: "compaction", id: "cmp_1", content: "" },
+        { type: "compaction", id: "cmp_2", content: null },
+      ],
+    } as unknown as GenAIMessage;
+
+    const adapted = adaptUnsupportedParts(message);
+
+    expect(adapted.parts).toEqual([]);
+    expect(adapted._provider_metadata).toEqual({
+      _unsupportedParts: [
+        { type: "compaction", id: "cmp_1", content: "" },
+        { type: "compaction", id: "cmp_2", content: null },
+      ],
     });
   });
 

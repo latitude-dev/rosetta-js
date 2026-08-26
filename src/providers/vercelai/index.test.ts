@@ -2165,7 +2165,7 @@ describe("VercelAISpecification", () => {
         });
       });
 
-      it("should preserve compaction parts as message metadata instead of flattening them to text", () => {
+      it("should convert a compaction summary to text content", () => {
         const messages: GenAIMessage[] = [
           {
             role: "assistant",
@@ -2179,17 +2179,19 @@ describe("VercelAISpecification", () => {
         const result = VercelAISpecification.fromGenAI({ messages, direction: "output", providerMetadata: "preserve" });
 
         expect(result.messages).toHaveLength(1);
-        // The Vercel AI SDK cannot represent compaction, so it is not part of the content
-        // (a lone text part still collapses to string content)
-        expect((result.messages[0] as { content: unknown }).content).toBe("Carrying on.");
-        expect(result.messages[0]).toMatchObject({
-          _providerMetadata: {
-            _unsupportedParts: [{ type: "compaction", id: "cmp_1", content: "Summary of the earlier turns." }],
+        // The summary is the conversation state the model is given, so it belongs in the content
+        expect((result.messages[0] as { content: unknown[] }).content).toEqual([
+          {
+            type: "text",
+            text: "Summary of the earlier turns.",
+            _providerMetadata: { _knownFields: { originalType: "compaction" } },
           },
-        });
+          { type: "text", text: "Carrying on." },
+        ]);
+        expect(result.messages[0]).not.toHaveProperty("_providerMetadata");
       });
 
-      it("should not add metadata for compaction parts in strip mode", () => {
+      it("should keep the compaction summary in strip mode", () => {
         const messages: GenAIMessage[] = [
           {
             role: "assistant",
@@ -2202,10 +2204,19 @@ describe("VercelAISpecification", () => {
 
         const result = VercelAISpecification.fromGenAI({ messages, direction: "output", providerMetadata: "strip" });
 
-        expect(result.messages).toEqual([{ role: "assistant", content: "Carrying on." }]);
+        expect(result.messages).toEqual([
+          {
+            role: "assistant",
+            content: [
+              { type: "text", text: "Summary" },
+              { type: "text", text: "Carrying on." },
+            ],
+          },
+        ]);
       });
 
-      it("should keep compaction parts out of system message content", () => {
+      it("should fold a compaction summary into system message content", () => {
+        // System messages require string content, so the summary is joined with the other text
         const messages: GenAIMessage[] = [
           {
             role: "system",
@@ -2216,12 +2227,30 @@ describe("VercelAISpecification", () => {
           },
         ];
 
+        const result = VercelAISpecification.fromGenAI({ messages, direction: "output", providerMetadata: "strip" });
+
+        expect(result.messages[0]).toEqual({ role: "system", content: "Be helpful.\nSummary" });
+      });
+
+      it("should preserve a compaction part with no readable summary as message metadata", () => {
+        // Providers may only expose an encrypted compaction item, leaving no text to carry
+        const messages: GenAIMessage[] = [
+          {
+            role: "assistant",
+            parts: [
+              { type: "compaction", id: "cmp_1" },
+              { type: "text", content: "Carrying on." },
+            ],
+          },
+        ];
+
         const result = VercelAISpecification.fromGenAI({ messages, direction: "output", providerMetadata: "preserve" });
 
+        expect(result.messages).toHaveLength(1);
+        // A lone text part still collapses to string content
+        expect((result.messages[0] as { content: unknown }).content).toBe("Carrying on.");
         expect(result.messages[0]).toMatchObject({
-          role: "system",
-          content: "Be helpful.",
-          _providerMetadata: { _unsupportedParts: [{ type: "compaction", id: "cmp_1", content: "Summary" }] },
+          _providerMetadata: { _unsupportedParts: [{ type: "compaction", id: "cmp_1" }] },
         });
       });
     });
