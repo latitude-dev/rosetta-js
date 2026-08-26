@@ -94,7 +94,7 @@ const { messages, system } = translate(inputMessages, {
 | `system` | `string \| object \| object[]` | - | System instructions (for providers that separate them) |
 | `direction` | `"input" \| "output"` | `"input"` | Affects role interpretation when translating strings |
 | `inferPriority` | `Provider[]` | `DEFAULT_INFER_PRIORITY` | Priority order for provider auto-detection |
-| `filterEmptyMessages` | `boolean` | `false` | Remove empty messages (no parts, or only empty text/compaction content) during translation |
+| `filterEmptyMessages` | `boolean` | `false` | Remove empty messages (no parts, or only blank `text`/`reasoning`/`compaction` content) during translation |
 | `providerMetadata` | `"preserve" \| "passthrough" \| "strip"` | `"preserve"` | How to handle provider metadata (extra fields) in translation |
 
 **Returns:** `{ messages, system? }` - translated messages and optional system instructions

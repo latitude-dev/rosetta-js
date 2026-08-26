@@ -802,6 +802,35 @@ describe("edge cases", () => {
   });
 
   describe("filterEmptyMessages option", () => {
+    it("should drop a message whose only part is an empty reasoning block", () => {
+      const messages: GenAIMessage[] = [
+        { role: "assistant", parts: [{ type: "reasoning", content: "   " }] },
+        { role: "assistant", parts: [{ type: "text", content: "Done." }] },
+      ];
+
+      const result = translate(messages, { from: Provider.GenAI, filterEmptyMessages: true });
+
+      expect(result.messages).toHaveLength(1);
+      expect(result.messages[0]?.parts[0]).toEqual({ type: "text", content: "Done." });
+    });
+
+    it("should keep a message whose reasoning block has content", () => {
+      const messages: GenAIMessage[] = [{ role: "assistant", parts: [{ type: "reasoning", content: "Thinking" }] }];
+
+      const result = translate(messages, { from: Provider.GenAI, filterEmptyMessages: true });
+
+      expect(result.messages).toHaveLength(1);
+    });
+
+    it("should keep a message with a non-text part even when its content is empty", () => {
+      // A blob's content is base64 data, not text, so emptiness is not the same question
+      const messages: GenAIMessage[] = [{ role: "user", parts: [{ type: "blob", modality: "image", content: "" }] }];
+
+      const result = translate(messages, { from: Provider.GenAI, filterEmptyMessages: true });
+
+      expect(result.messages).toHaveLength(1);
+    });
+
     it("should drop a message whose only part is a compaction with no summary", () => {
       const messages: GenAIMessage[] = [
         { role: "user", parts: [{ type: "compaction", id: "cmp_1" }] },

@@ -1180,7 +1180,7 @@ fromGenAI({ messages, providerMetadata }: ProviderFromGenAIArgs) {
 **Always map to another part, never to metadata.** Every conversion records the source type in `_known_fields.originalType`, which is the same mechanism `redacted-reasoning` and VercelAI `custom` already use:
 
 - `server_tool_call` and `server_tool_call_response` become `tool_call` and `tool_call_response`, so the target can still tell the tool ran on the provider (VercelAI turns this into `providerExecuted: true`).
-- `compaction` becomes a `text` part. The summary is the conversation state the model is given in place of the turns it replaced, so it belongs in the content — a target that moved it aside would discard the history it stands for. An encrypted item with no summary becomes an empty text part, and `filterEmptyGenAIMessages` treats an empty `compaction` like an empty `text` part so such messages can be filtered.
+- `compaction` becomes a `text` part. The summary is the conversation state the model is given in place of the turns it replaced, so it belongs in the content — a target that moved it aside would discard the history it stands for. An encrypted item with no summary becomes an empty text part, and `filterEmptyGenAIMessages` treats a blank `compaction` (like a blank `reasoning`) as empty text content so such messages can be filtered.
 
 Because the parts are adapted up front, the rest of `fromGenAI` (tool name lookups, role splitting, part conversion) needs no special cases.
 

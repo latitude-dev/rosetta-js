@@ -51,9 +51,11 @@ export type TranslateOptions<From extends ProviderSource = Provider, To extends 
    *
    * When true, messages that have no meaningful content are removed from the output:
    * - It has no parts, OR
-   * - All parts are empty text parts (empty or whitespace-only)
+   * - All parts carry empty text content (empty or whitespace-only)
    *
-   * Messages with any non-text parts (tool_call, reasoning, blob, etc.) are always kept.
+   * The `text`, `reasoning` and `compaction` parts all carry their content as text, so they
+   * count as empty when that text is blank. Messages with any other part (tool_call, blob,
+   * etc.) are always kept.
    * This is useful for cleaning up conversation history before sending to an LLM.
    *
    * @default false
@@ -96,12 +98,14 @@ export type SafeTranslateResult<To extends ProviderTarget> =
  * Filters out empty messages from GenAI messages.
  * A message is considered empty if:
  * - It has no parts, OR
- * - All parts are empty text parts (empty or whitespace-only)
+ * - All parts carry empty text content (empty or whitespace-only)
  *
- * Compaction parts count as text: their summary is the conversation state the model is given,
- * so an encrypted item with no summary is as empty as an empty text part.
+ * `text`, `reasoning` and `compaction` all hold their content as text, so a blank one carries
+ * nothing: an empty reasoning block or an encrypted compaction item with no summary is as empty
+ * as an empty text part.
  *
- * Messages with any other part (tool_call, reasoning, blob, etc.) are always kept.
+ * Messages with any other part (tool_call, blob, file, uri, etc.) are always kept. Their content
+ * fields are not text (a blob's is base64 data), so emptiness there is not the same question.
  */
 function filterEmptyGenAIMessages(messages: GenAIMessage[]): GenAIMessage[] {
   return messages.filter((message) => {
@@ -110,13 +114,13 @@ function filterEmptyGenAIMessages(messages: GenAIMessage[]): GenAIMessage[] {
       return false;
     }
 
-    // Check if all parts are empty text parts
+    // Check if all parts carry empty text content
     const allEmptyText = message.parts.every((part) => {
-      if (part.type === "text" || part.type === "compaction") {
+      if (part.type === "text" || part.type === "reasoning" || part.type === "compaction") {
         const content = (part as { content?: string | null }).content;
         return !content || content.trim() === "";
       }
-      // Other parts (tool_call, reasoning, blob, etc.) count as non-empty
+      // Other parts (tool_call, blob, file, uri, etc.) count as non-empty
       return false;
     });
 
